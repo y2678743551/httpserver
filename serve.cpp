@@ -9,6 +9,14 @@
 #include<map>
 #include<sys/epoll.h>
 #include<cassert>
+#include<vector>
+#include<algorithm>
+#include<sys/signalfd.h>
+#include<signal.h>
+#include<atomic>
+
+
+
 std::error_category const& gai_category(){
     static struct final: std::error_category{
         char const *name() const noexcept  override{
@@ -27,7 +35,7 @@ T check_error(const char*msg,T ret){
     if(ret==-1){
         if constexpr(Except!=0)
         {
-            if(errno==Except)
+            if(errno==Except||errno==ECONNRESET||errno==EAGAIN)//暂时这样后续考虑把Except改成数组
             {
                 return -1;
             }
@@ -56,21 +64,44 @@ struct socket_address_storage{
 class Epoll_manger
 {   int m_epfd;
     public:
+    class fd_data;
+    private:
+    std::vector<fd_data*> m_connections;
+    public:
 
 
-    class socketdata;
+    void add_fd(int fd){//为监听fd和signalfd使用
+        epoll_event ev;
+        ev.data.fd=fd;
+        ev.events=EPOLLIN|EPOLLET;
+        
+        CHECK_CALL(epoll_ctl,m_epfd,EPOLL_CTL_ADD,fd,&ev);
+    }
+    void remove_fd(int fd){
+        CHECK_CALL(epoll_ctl,m_epfd,EPOLL_CTL_DEL,fd,NULL);
+        close(fd);
+    }
 
-    void add_to_epoll(int fd,socketdata* ptr){
+    void add_to_epoll(int fd,fd_data* ptr){//添加进程
 
         epoll_event ev;
         ev.data.ptr=ptr;
-        ev.events=EPOLLIN;
-
+        ev.events=EPOLLIN|EPOLLET;
+        m_connections.push_back(ptr);
         CHECK_CALL(epoll_ctl,m_epfd,EPOLL_CTL_ADD,fd,&ev);
         
     }
-
-    class socketdata{
+    void delete_from_epoll(fd_data *ptr){
+        printf("%d\n\n\n",ptr->getfd());
+        auto it=std::find(m_connections.begin(),m_connections.end(),ptr);
+        if(it!=m_connections.end())
+            m_connections.erase(it);
+        CHECK_CALL(epoll_ctl,m_epfd,EPOLL_CTL_DEL,ptr->getfd(),NULL);
+        
+        delete ptr;
+    }
+    
+    class fd_data{
   
         socket_address_storage m_addr;
         int m_fd;
@@ -81,28 +112,30 @@ class Epoll_manger
             m_addr=addr;
         }
 
-        socketdata()=default;
-
-        socketdata(socket_address_storage addr,int fd,Epoll_manger &ep){
+        fd_data()=default;
+        fd_data(int fd,Epoll_manger &ep){
+            m_fd=fd;
+            
+            ep.add_to_epoll(fd,this);
+        }
+        fd_data(socket_address_storage addr,int fd,Epoll_manger &ep){
             m_fd=fd;
             m_addr=addr;
             ep.add_to_epoll(fd,this);
         }
-        ~socketdata(){
-            printf("delete fd %d\n\n\n\n",m_fd);
+        ~fd_data(){
+            printf("delete fd %d\n\n",m_fd);
             close(m_fd);
         }
     };
 
-    void delete_from_epoll(socketdata *handler){
-        
-        CHECK_CALL(epoll_ctl,m_epfd,EPOLL_CTL_DEL,handler->getfd(),NULL);
-        handler->~socketdata();
-    }
     
     Epoll_manger()=default;
     Epoll_manger(int fd):m_epfd(fd){}
     ~Epoll_manger(){
+        for(auto conn:m_connections){
+            delete_from_epoll(conn);
+        }
         printf("closed %d \n",m_epfd);
         close(m_epfd);
     }
@@ -392,19 +425,19 @@ class address_resolver{
     }
 
 };
-bool read_from_clinet(Epoll_manger::socketdata* cur,Epoll_manger &ep,int fd){
+
+bool read_from_clinet(Epoll_manger::fd_data* cur,Epoll_manger &ep,int fd){//从客户端读取数据
            
            char buf[1024];
                 http_request_parser req_parser;
                 do {
 
-                    size_t ret=CHECK_CALL(recv,fd,buf,sizeof(buf),0);
+                    size_t ret=CHECK_CALL_EXCEPT(EPIPE,recv,fd,buf,sizeof(buf),0);
                   
                     //printf("write:%s\n",buf);
                     if(ret==0){
                         
                         ep.delete_from_epoll(cur);
-                        delete cur;
                         return false;
                     }
                    
@@ -417,7 +450,7 @@ bool read_from_clinet(Epoll_manger::socketdata* cur,Epoll_manger &ep,int fd){
                 return true;
 }
 
-bool write_to_clinet(Epoll_manger::socketdata* cur,Epoll_manger &ep,int fd,std::string body){
+bool write_to_clinet(Epoll_manger::fd_data* cur,Epoll_manger &ep,int fd,std::string body){//向客户端写数据
            
                 if(body.empty()){
             
@@ -440,25 +473,40 @@ bool write_to_clinet(Epoll_manger::socketdata* cur,Epoll_manger &ep,int fd,std::
                 res_writer.head_write("Content-length",std::to_string(body.size()));
                 res_writer.head_end();
                 res_writer.body_write(body);
-                if(CHECK_CALL_EXCEPT(EPIPE,write,fd,res_writer.head().data(),res_writer.head().size())){
-                     //ep.delete_from_epoll(cur);
-                        //delete cur;
-                        //return false;
+                if(CHECK_CALL_EXCEPT(EPIPE,write,fd,res_writer.head().data(),res_writer.head().size())==0){
+                     ep.delete_from_epoll(cur);
+
+                        return false;
                 }
-                if( CHECK_CALL_EXCEPT(EPIPE,write,fd,body.data(),body.size())){
-                        //ep.delete_from_epoll(cur);
-                        //delete cur;
-                        
-                    return false;
+                if( CHECK_CALL_EXCEPT(EPIPE,write,fd,body.data(),body.size())==0){
+                        ep.delete_from_epoll(cur);
+                        return false;
                 }
                 
                 printf("write:%s\n\n%s\n",res_writer.body().c_str(),res_writer.head().c_str());
                 return true;
 }
 int main(){
+
+    //使服务端可以从main结尾退出
+    sigset_t mask;
+    sigemptyset(&mask);
+    sigaddset(&mask,SIGINT);
+    sigaddset(&mask,SIGTERM);
+    sigaddset(&mask,SIGQUIT);
+    //signal(SIGPIPE,SIG_IGN);
+    CHECK_CALL(sigprocmask,SIG_BLOCK,&mask,NULL);
+    int sfd=signalfd(-1,&mask,SFD_NONBLOCK);
+    if(sfd==-1){
+        perror("signalfd");
+        exit(EXIT_FAILURE);
+    }
+
+
     setlocale(LC_ALL,"zh_CN.UTF-8");
  
-    address_resolver resolver;
+    
+    address_resolver resolver;//服务端申请地址端口
     resolver.resolve("127.0.0.1","8080");
     
     address_resolver::address_resolver_entry entry=resolver.get_entry();
@@ -470,48 +518,69 @@ int main(){
         exit(0);
     }
     Epoll_manger ep(epfd);
-    Epoll_manger::socketdata listensocket(entry.get_addr(),entry.create_socket_and_bind(),ep);
-    CHECK_CALL(listen,listensocket.getfd(),SOMAXCONN);
+    int listenfd=entry.create_socket_and_bind();
+    ep.add_fd(listenfd);
+    ep.add_fd(sfd);
+    CHECK_CALL(listen,listenfd,4096);
     epoll_event evs[1024];
     
     int size=sizeof(evs)/sizeof(evs[0]);
-    
-    while(1){
+    bool running=true;
+
+    while(running){
       
-        printf("%d\n",epfd);
+        
         
         int num=CHECK_CALL(epoll_wait,epfd,evs,size,-1);
         
         printf("%d\n",num);
-        for(int i=0;i<num;i++){
-            auto cur=(Epoll_manger::socketdata*)evs->data.ptr;
-
-            int fd=cur->getfd();
-            if(fcntl(fd,F_GETFD)==-1)
-            continue;
-            if(fd==listensocket.getfd()){
+        for(int i=0;i<num;i++){ 
+            
+            
+            if(evs[i].data.fd==sfd){                //处理中断信号
+                
+                signalfd_siginfo siginfo;
+                ssize_t s=read(sfd,&siginfo,sizeof(siginfo));
+                if(s==sizeof(siginfo)){
+                    int sig=siginfo.ssi_signo;
+                    printf("received signal %d (%s)\n",sig,strsignal(sig));
+                    if(sig==SIGINT||sig==SIGTERM){
+                        running=false;
+                    }
+                }
+                continue;
+                
+            }else
+            if(evs[i].data.fd==listenfd){//监听新客户端
                 
                 socket_address_storage addr;
-                int clientfd=CHECK_CALL(accept4,fd,addr.m_addr,&addr.m_addrlen,O_NONBLOCK);
-                new Epoll_manger::socketdata(addr,clientfd,ep);
+                int clientfd=CHECK_CALL(accept4,listenfd,addr.m_addr,&addr.m_addrlen,O_NONBLOCK);
+                int flag=fcntl(clientfd,F_GETFL);
+                flag|=O_NONBLOCK;
+                fcntl(clientfd,F_SETFL,flag);
+                new Epoll_manger::fd_data(addr,clientfd,ep);
                 printf("build new connect:%d\n",clientfd);
                 //printf("%d\n",clientfd);
                 
                 
-            }else{
+            }else{      //处理客户端
+                auto cur=(Epoll_manger::fd_data*)evs[i].data.ptr;
+                int fd=cur->getfd();           
+                if(fcntl(fd,F_GETFD)==-1)
+                    continue;             
                 printf("talk with:%d\n",fd);
                 if(!read_from_clinet(cur,ep,fd))
                     continue;
     
                 write_to_clinet(cur,ep,fd,"hello");
-                    ep.delete_from_epoll(cur);
-                        delete cur;
-                 return 0;
+                    
+                 //return 0;
             }
         }
 
     }
-
+    ep.remove_fd(listenfd);
+    ep.remove_fd(sfd);
 return 0;
 
     

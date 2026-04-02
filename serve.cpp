@@ -30,17 +30,18 @@ std::error_category const& gai_category(){
     return instance;
 }
 template<int Except=0,class T>
+
 T check_error(const char*msg,T ret){
 
     if(ret==-1){
         if constexpr(Except!=0)
         {
-            if(errno==Except||errno==ECONNRESET||errno==EAGAIN)//暂时这样后续考虑把Except改成数组
+            if(errno==Except||errno==ECONNRESET||errno==EAGAIN)
             {
                 return -1;
             }
         }
-         printf("%s: %s",msg,strerror(errno));
+         printf("%s: %s\n",msg,strerror(errno));
          auto ec=std::error_code(errno,std::system_category());
          throw std::system_error(ec,msg);   
         }
@@ -92,7 +93,7 @@ class Epoll_manger
         
     }
     void delete_from_epoll(fd_data *ptr){
-        printf("%d\n\n\n",ptr->getfd());
+       
         auto it=std::find(m_connections.begin(),m_connections.end(),ptr);
         if(it!=m_connections.end())
             m_connections.erase(it);
@@ -430,22 +431,38 @@ bool read_from_clinet(Epoll_manger::fd_data* cur,Epoll_manger &ep,int fd){//从�
            
            char buf[1024];
                 http_request_parser req_parser;
-                do {
+                while(1) {
 
-                    size_t ret=CHECK_CALL_EXCEPT(EPIPE,recv,fd,buf,sizeof(buf),0);
+                    ssize_t ret=recv(fd,buf,sizeof(buf),0);
                   
                     //printf("write:%s\n",buf);
                     if(ret==0){
                         
                         ep.delete_from_epoll(cur);
                         return false;
+                    }else if(ret>0){
+
+                    req_parser.push_chunk(buf);
+                        if(req_parser.request_finish())
+                            break;
+                    }else{
+                        if(errno==EAGAIN||errno==EWOULDBLOCK){
+                            break;
+                        }else if(errno==EPIPE||errno==ECONNRESET){
+                            ep.delete_from_epoll(cur);
+                        return false;
+                        }else{
+                            printf("%s: %s",SOURCE_INFO(),strerror(errno));
+                            auto ec=std::error_code(errno,std::system_category());
+                            throw std::system_error(ec,SOURCE_INFO());   
+                        }
                     }
                    
-                    req_parser.push_chunk(buf);
                     
-                }while(!req_parser.request_finish());
+                }
+                assert(req_parser.request_finish());
                 
-                printf("headline:%s\n\nhead:%s\n\n\n",req_parser.head_line().c_str(),req_parser.head().c_str());
+                //printf("headline:%s\n\nhead:%s\n\n\n",req_parser.head_line().c_str(),req_parser.head().c_str());
                 
                 return true;
 }
@@ -454,7 +471,7 @@ bool write_to_clinet(Epoll_manger::fd_data* cur,Epoll_manger &ep,int fd,std::str
            
                 if(body.empty()){
             
-                    body="正文为空";
+                    body="";
            
                 }else{
            
@@ -473,17 +490,31 @@ bool write_to_clinet(Epoll_manger::fd_data* cur,Epoll_manger &ep,int fd,std::str
                 res_writer.head_write("Content-length",std::to_string(body.size()));
                 res_writer.head_end();
                 res_writer.body_write(body);
-                if(CHECK_CALL_EXCEPT(EPIPE,write,fd,res_writer.head().data(),res_writer.head().size())==0){
-                     ep.delete_from_epoll(cur);
 
+                while(1){
+                    ssize_t ret=send(fd,res_writer.head().data(),res_writer.head().size(),0);
+                  
+                    //printf("write:%s\n",buf);
+                    if(ret>=0){
+                        res_writer.head()=res_writer.head().substr(ret);
+                        break;
+                    }else{
+                        
+                        if(errno==EAGAIN||errno==EWOULDBLOCK){
+                            return true;
+                        }else if(errno==EPIPE||errno==ECONNRESET){
+                            ep.delete_from_epoll(cur);
                         return false;
+                        }else{
+                            printf("%s: %s\n",SOURCE_INFO(),strerror(errno));
+                            auto ec=std::error_code(errno,std::system_category());
+                            throw std::system_error(ec,SOURCE_INFO());   
+                        }
+                    }
                 }
-                if( CHECK_CALL_EXCEPT(EPIPE,write,fd,body.data(),body.size())==0){
-                        ep.delete_from_epoll(cur);
-                        return false;
-                }
+               
                 
-                printf("write:%s\n\n%s\n",res_writer.body().c_str(),res_writer.head().c_str());
+                //printf("write:%s\n\n%s\n",res_writer.body().c_str(),res_writer.head().c_str());
                 return true;
 }
 int main(){
@@ -521,8 +552,12 @@ int main(){
     int listenfd=entry.create_socket_and_bind();
     ep.add_fd(listenfd);
     ep.add_fd(sfd);
-    CHECK_CALL(listen,listenfd,4096);
-    epoll_event evs[1024];
+
+    int flag=fcntl(listenfd,F_GETFL);
+    flag|=O_NONBLOCK;
+    fcntl(listenfd,F_SETFL,flag);
+    CHECK_CALL(listen,listenfd,4096000);
+    epoll_event evs[102400];
     
     int size=sizeof(evs)/sizeof(evs[0]);
     bool running=true;
@@ -533,7 +568,7 @@ int main(){
         
         int num=CHECK_CALL(epoll_wait,epfd,evs,size,-1);
         
-        printf("%d\n",num);
+        //printf("%d\n",num);
         for(int i=0;i<num;i++){ 
             
             
@@ -543,8 +578,8 @@ int main(){
                 ssize_t s=read(sfd,&siginfo,sizeof(siginfo));
                 if(s==sizeof(siginfo)){
                     int sig=siginfo.ssi_signo;
-                    printf("received signal %d (%s)\n",sig,strsignal(sig));
-                    if(sig==SIGINT||sig==SIGTERM){
+                    //printf("received signal %d (%s)\n",sig,strsignal(sig));
+                    if(sig==SIGINT||sig==SIGTERM||sig==SIGPIPE){
                         running=false;
                     }
                 }
@@ -554,25 +589,47 @@ int main(){
             if(evs[i].data.fd==listenfd){//监听新客户端
                 
                 socket_address_storage addr;
-                int clientfd=CHECK_CALL(accept4,listenfd,addr.m_addr,&addr.m_addrlen,O_NONBLOCK);
-                int flag=fcntl(clientfd,F_GETFL);
-                flag|=O_NONBLOCK;
-                fcntl(clientfd,F_SETFL,flag);
-                new Epoll_manger::fd_data(addr,clientfd,ep);
-                printf("build new connect:%d\n",clientfd);
+                int clientfd;
+                 
+            while(1) {
+
+                    clientfd=accept4(listenfd,addr.m_addr,&addr.m_addrlen,O_NONBLOCK);
+                  
+                    //printf("write:%s\n",buf);
+                    if(clientfd>=0){
+                        int flag=fcntl(clientfd,F_GETFL);
+                        flag|=O_NONBLOCK;
+                        fcntl(clientfd,F_SETFL,flag);
+                        new Epoll_manger::fd_data(addr,clientfd,ep);
+                        //printf("build new connect:%d\n",clientfd);
+                        continue;
+                    
+                    }else{
+                        if(errno==EAGAIN||errno==EWOULDBLOCK){
+                            break;
+                        }else if(errno==ECONNABORTED){
+                            
+                            continue;
+                        }else{
+                            printf("%s: %s",SOURCE_INFO(),strerror(errno));
+                            auto ec=std::error_code(errno,std::system_category());
+                            throw std::system_error(ec,SOURCE_INFO());   
+                        }
+                    }
+                
                 //printf("%d\n",clientfd);
                 
-                
+            }
             }else{      //处理客户端
                 auto cur=(Epoll_manger::fd_data*)evs[i].data.ptr;
                 int fd=cur->getfd();           
                 if(fcntl(fd,F_GETFD)==-1)
                     continue;             
-                printf("talk with:%d\n",fd);
+                //printf("talk with:%d\n",fd);
                 if(!read_from_clinet(cur,ep,fd))
                     continue;
     
-                write_to_clinet(cur,ep,fd,"hello");
+                write_to_clinet(cur,ep,fd,"");
                     
                  //return 0;
             }

@@ -298,26 +298,38 @@ class http_respose_parser :public http_base_parser
             return -1;
         }
     }
+    
+};
+class http_writer{
+    bool m_begin;
+    bool m_end;
+    std::string m_head;
+    public:
+    http_writer():m_begin(false),m_end(false){    }
+    std::string& head(){
+        return m_head;
+    }
     void head_begin(int status){
-        this->push_chunk("HTTP/1.1 "+std::to_string(status)+" OK\r\n");
-        
+        assert(!m_begin);
+        assert(!m_end);
+        m_head.append("HTTP/1.1 "+std::to_string(status)+" OK\r\n");
+        m_begin=true;        
         return;
     }
     void head_write(std::string key,std::string value){
-        this->push_chunk(key+": "+value+"\r\n");
+        assert(!m_end);
+        m_head.append(key+": "+value+"\r\n");
+        
         return;
     }
     void head_end(){
-        this->push_chunk("\r\n");
+        assert(!m_end);
+        m_head.append("\r\n");
+        m_end=true;
         return;
         }
-    void body_write(std::string body){
 
-        this->push_chunk(body);
-        return;
-    }
 };
-
         
 class Epoll_manger
 {   int m_epfd;
@@ -439,16 +451,18 @@ class Epoll_manger
 
                 
                 http_respose_parser res_writer;
-                res_writer.head_begin(200);
+                http_writer head_buf;
+                head_buf.head_begin(200);
            
-                res_writer.head_write("Server","co_http");
+                head_buf.head_write("Server","co_http");
            
-                res_writer.head_write("Connection","keep-alive");
-                res_writer.head_write("Content-type","text/html;charset=utf-8");
-                res_writer.head_write("Content-length",std::to_string(body.size()));
-                res_writer.head_end();
-                res_writer.body_write(body);
+                head_buf.head_write("Connection","keep-alive");
+                head_buf.head_write("Content-type","text/html;charset=utf-8");
+                head_buf.head_write("Content-length",std::to_string(body.size()));
+                head_buf.head_end();
                 
+                std::string buf=res_writer.head();
+                m_write_buffer+=res_writer.head()+res_writer.body();
                 while(1){
                     ssize_t ret=send(m_fd,res_writer.head().data(),res_writer.head().size(),0);
                   

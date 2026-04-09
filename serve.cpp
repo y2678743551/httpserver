@@ -89,6 +89,9 @@ class http11_head_parser{
     
     void _extract_head(){
         size_t pos=m_head.find("\r\n");
+        if(pos!=std::string::npos){
+            return;
+        }
         m_heading_line=m_head.substr(0,pos);
         while(pos!=std::string::npos){
             
@@ -378,17 +381,49 @@ class Epoll_manger
     class fd_data{
         http_request_parser m_request_parser;
         std::string m_read_buffer="";//读缓冲区
-
+        
         std::string m_write_buffer="";//写缓冲区
         int m_fd;
+        
         Epoll_manger &m_ep;
         socket_address_storage m_addr;
-        
+
         
         public:
 
         int &getfd(){return m_fd;}
+        void add_http_repose(std::string body){
+            if(body.empty()){
+            
+                    body="";
+           
+                }else{
+           
+                    body="正文为"+body;
+           
+                }
 
+                
+                //http_respose_parser res_writer;
+                http_writer head_buf;
+                head_buf.head_begin(200);
+           
+                head_buf.head_write("Server","co_http");
+           
+                head_buf.head_write("Connection","keep-alive");
+                head_buf.head_write("Content-type","text/html;charset=utf-8");
+                head_buf.head_write("Content-length",std::to_string(body.size()));
+                head_buf.head_end();
+                bool ifempty=m_write_buffer.empty();
+                m_write_buffer+=head_buf.head()+body;
+                if(ifempty){
+                    m_ep.mod_fd(this,EPOLLIN|EPOLLOUT|EPOLLET); 
+                }
+                
+                
+                
+                
+        }
         bool on_readable(){//从客户端读取数据
            
            char buf[1024];
@@ -405,7 +440,7 @@ class Epoll_manger
                             if(consumed==0)
                                 break;
                             m_read_buffer.erase(0,consumed);//时间复杂度过大
-                            //处理数据暂时没有
+                            add_http_repose("Hello");//处理数据暂时没有
                             m_request_parser.reset();
                             continue;
                         }
@@ -437,60 +472,44 @@ class Epoll_manger
                 
                 return true;
 }
-    bool on_writable(std::string body){//向客户端写数据
-           
-                if(body.empty()){
-            
-                    body="";
-           
-                }else{
-           
-                    body="正文为"+body;
-           
-                }
+    
 
-                
-                http_respose_parser res_writer;
-                http_writer head_buf;
-                head_buf.head_begin(200);
+        bool on_writable(){//向客户端写数据
            
-                head_buf.head_write("Server","co_http");
-           
-                head_buf.head_write("Connection","keep-alive");
-                head_buf.head_write("Content-type","text/html;charset=utf-8");
-                head_buf.head_write("Content-length",std::to_string(body.size()));
-                head_buf.head_end();
                 
-                std::string buf=res_writer.head();
-                m_write_buffer+=res_writer.head()+res_writer.body();
+                
                 while(1){
-                    ssize_t ret=send(m_fd,res_writer.head().data(),res_writer.head().size(),0);
-                  
-                    //printf("write:%s\n",buf);
                     
-                    if(ret>=0){
-                        res_writer.head()=res_writer.head().substr(ret);
-                        if(res_writer.head().empty())
-                        {
-                            //ep.mod_fd(cur,EPOLLIN|EPOLLET);
+                        ssize_t ret=send(m_fd,m_write_buffer.data(),m_write_buffer.size(),0);
+                        if(ret>=0){
+                        m_write_buffer.erase(0,ret);
+                        if(m_write_buffer.empty()){
+                            m_ep.mod_fd(this,EPOLLIN|EPOLLET);
                             return true;
                         }
                         
-                    }else{
+                        }else{
                         
                         if(errno==EAGAIN||errno==EWOULDBLOCK){
-                            //ep.mod_fd(cur,EPOLLIN|EPOLLOUT);   需要实现对epollout兼容
-                            continue;
+                            if(!m_write_buffer.empty())
+                                m_ep.mod_fd(this,EPOLLIN|EPOLLOUT|EPOLLET);  
+                            break;
                         }else if(errno==EPIPE||errno==ECONNRESET){
                             m_ep.delete_from_epoll(this);
                             return false;
                         }else{
                             printf("%s: %s\n",SOURCE_INFO(),strerror(errno));
-                            auto ec=std::error_code(errno,std::system_category());
-                            throw std::system_error(ec,SOURCE_INFO());   
+                            m_ep.delete_from_epoll(this);
+                            return false; 
                         }
                     }
-                }
+                
+                    }
+                    
+                  
+                    //printf("write:%s\n",buf);
+                    
+                    
                
                 
                 //printf("write:%s\n\n%s\n",res_writer.body().c_str(),res_writer.head().c_str());
@@ -594,6 +613,7 @@ class address_resolver{
 int main(){
 
     //使服务端可以从main结尾退出
+    signal(SIGPIPE,SIG_IGN);
     sigset_t mask;
     sigemptyset(&mask);
     sigaddset(&mask,SIGINT);
@@ -669,7 +689,7 @@ int main(){
 
                     clientfd=accept4(listenfd,addr.m_addr,&addr.m_addrlen,O_NONBLOCK);
                   
-                    //printf("write:%s\n",buf);
+                    
                     if(clientfd>=0){
                         int flag=fcntl(clientfd,F_GETFL);
                         flag|=O_NONBLOCK;
@@ -700,9 +720,11 @@ int main(){
                 if(fcntl(fd,F_GETFD)==-1)
                     continue;             
                 //printf("talk with:%d\n",fd);
-                cur->on_readable();
-    
-                cur->on_writable("hello");
+                if(evs[i].events&EPOLLIN)
+                    if(!cur->on_readable())
+                        continue;
+                if(evs[i].events&EPOLLOUT);
+                cur->on_writable();
                     
                  //return 0;
             }

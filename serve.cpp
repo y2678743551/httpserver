@@ -14,7 +14,8 @@
 #include<sys/signalfd.h>
 #include<signal.h>
 #include<atomic>
-
+#include<nlohmann/json.hpp>
+#include"file_utils.hpp"
 
 
 std::error_category const& gai_category(){
@@ -89,7 +90,7 @@ class http11_head_parser{
     
     void _extract_head(){
         size_t pos=m_head.find("\r\n");
-        if(pos!=std::string::npos){
+        if(pos==std::string::npos){
             return;
         }
         m_heading_line=m_head.substr(0,pos);
@@ -115,6 +116,7 @@ class http11_head_parser{
                         ch-='A'-'a';
                     }
                 }
+               
                 m_head_keys.emplace(key,val);
             }   
         }
@@ -193,7 +195,7 @@ class http_base_parser{
             
         }
         
-        return headline.substr(space1+1,space2-space1);
+        return headline.substr(space1+1,space2-space1-1);
         
     }
     std::string _head_third(){
@@ -213,7 +215,7 @@ class http_base_parser{
         {   return "GET";
             
         }
-        return headline.substr(space2+1,space3-space2);
+        return headline.substr(space2+1,space3-space2-1);
         
     }
     size_t _extract_content_length(){
@@ -238,6 +240,7 @@ class http_base_parser{
 
             if(head_finished()){
                 m_left_length=_extract_content_length();
+                
             }
         }
         if(head_finished())
@@ -392,37 +395,73 @@ class Epoll_manger
         public:
 
         int &getfd(){return m_fd;}
-        void add_http_repose(std::string body){
+        void add_http_repose(std::string body,std::string type){
             if(body.empty()){
             
-                    body="";
-           
-                }else{
-           
-                    body="正文为"+body;
+                    body="空";
            
                 }
 
-                
                 //http_respose_parser res_writer;
                 http_writer head_buf;
                 head_buf.head_begin(200);
            
                 head_buf.head_write("Server","co_http");
-           
+                
                 head_buf.head_write("Connection","keep-alive");
-                head_buf.head_write("Content-type","text/html;charset=utf-8");
+                head_buf.head_write("Content-type",type);       //text/html  or  application/json
                 head_buf.head_write("Content-length",std::to_string(body.size()));
                 head_buf.head_end();
                 bool ifempty=m_write_buffer.empty();
                 m_write_buffer+=head_buf.head()+body;
                 if(ifempty){
                     m_ep.mod_fd(this,EPOLLIN|EPOLLOUT|EPOLLET); 
+                }  
+        }
+        void handle_request(){
+            printf("%s\n%s\n",m_request_parser.url().c_str(),m_request_parser.method().c_str());
+            std::string url=m_request_parser.url();
+            std::string method=m_request_parser.method();
+            if(url=="/"){
+                std::string content=file_get_content("../log.html");
+                add_http_repose(content,"text/html");
+            }
+            if(url=="/api/submit"&&method=="POST")
+            {   
+                nlohmann::json request_msgs;
+                try
+                {
+                    request_msgs=nlohmann::json::parse(m_request_parser.body());
                 }
+                catch(const nlohmann::json::parse_error &e)
+                {
+                    printf("%s: %s",SOURCE_INFO(),strerror(errno));
+                }
+                nlohmann::json response_msgs;
+                if(request_msgs.at("username")=="aa"&&request_msgs.at("code")=="111")
+                {   
+                    
+                    response_msgs["href"]="../inner.html";
+                    response_msgs["status"]="OK";
+                    add_http_repose(response_msgs.dump(),"application/json");
+                    
+                }
+                else
+                {
+                    printf("%s\n %s\n",request_msgs.dump().c_str(),m_request_parser.body().c_str());
+                    
+                    response_msgs["status"]="no";
                 
-                
-                
-                
+                    add_http_repose(response_msgs.dump(),"application/json");
+                }
+            }else
+            if(url=="/inner.html"){
+                    std::string content=file_get_content("../inner.html");
+                    add_http_repose(content,"text/html");
+                    
+                }
+            
+            
         }
         bool on_readable(){//从客户端读取数据
            
@@ -430,7 +469,7 @@ class Epoll_manger
                 
                 while(true) {
 
-                    ssize_t ret=recv(m_fd,buf,sizeof(buf),0);//需要改为处理多个
+                    ssize_t ret=recv(m_fd,buf,sizeof(buf),0);
                     if(ret>0){
                         m_read_buffer.append(buf,ret);
 
@@ -439,8 +478,10 @@ class Epoll_manger
                         
                             if(consumed==0)
                                 break;
-                            m_read_buffer.erase(0,consumed);//时间复杂度过大
-                            add_http_repose("Hello");//处理数据暂时没有
+                            m_read_buffer.erase(0,consumed);
+                            handle_request();
+                            
+
                             m_request_parser.reset();
                             continue;
                         }
@@ -449,16 +490,21 @@ class Epoll_manger
                     else
                     if(ret==0){
                         
+                                
                         m_ep.delete_from_epoll(this);
                         return false;
                     }else{
                         if(errno==EAGAIN||errno==EWOULDBLOCK){
                             break;
                         }else if(errno==EPIPE||errno==ECONNRESET){
+
+                                
                             m_ep.delete_from_epoll(this);
                             return false;
                         }else{
                             printf("%s: %s",SOURCE_INFO(),strerror(errno));
+
+                                
                             m_ep.delete_from_epoll(this);
                             return false;
                         }
@@ -468,7 +514,7 @@ class Epoll_manger
                 }
                 //assert(m_request_parser.request_finish());
                 
-                //printf("headline:%s\n\nhead:%s\n\n\n",req_parser.head_line().c_str(),req_parser.head().c_str());
+                
                 
                 return true;
 }
@@ -484,6 +530,7 @@ class Epoll_manger
                         if(ret>=0){
                         m_write_buffer.erase(0,ret);
                         if(m_write_buffer.empty()){
+                            
                             m_ep.mod_fd(this,EPOLLIN|EPOLLET);
                             return true;
                         }
@@ -492,13 +539,17 @@ class Epoll_manger
                         
                         if(errno==EAGAIN||errno==EWOULDBLOCK){
                             if(!m_write_buffer.empty())
-                                m_ep.mod_fd(this,EPOLLIN|EPOLLOUT|EPOLLET);  
+                               {
+                                m_ep.mod_fd(this,EPOLLIN|EPOLLOUT|EPOLLET);
+                               }   
                             break;
                         }else if(errno==EPIPE||errno==ECONNRESET){
+                            
                             m_ep.delete_from_epoll(this);
                             return false;
                         }else{
                             printf("%s: %s\n",SOURCE_INFO(),strerror(errno));
+                           
                             m_ep.delete_from_epoll(this);
                             return false; 
                         }
@@ -534,6 +585,8 @@ class Epoll_manger
         }
         fd_data(socket_address_storage addr,int fd,Epoll_manger &ep):m_fd(fd),m_ep(ep),m_addr(addr){
             ep.add_to_epoll(fd,this);
+            
+            
         }
         ~fd_data(){
             printf("delete fd %d\n\n",m_fd);
@@ -577,6 +630,11 @@ class address_resolver{
         }
         int create_socket_and_bind(){
             int fd=CHECK_CALL(socket,cur->ai_family,cur->ai_socktype,cur->ai_protocol);
+            int opt = 1;
+            if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+                perror("setsockopt");
+    
+            }
             CHECK_CALL(bind,fd,cur->ai_addr,cur->ai_addrlen);
             
             return fd ;
@@ -611,7 +669,7 @@ class address_resolver{
 
 
 int main(){
-
+   
     //使服务端可以从main结尾退出
     signal(SIGPIPE,SIG_IGN);
     sigset_t mask;
@@ -643,6 +701,7 @@ int main(){
         exit(0);
     }
     Epoll_manger ep(epfd);
+    
     int listenfd=entry.create_socket_and_bind();
     ep.add_fd(listenfd);
     ep.add_fd(sfd);
@@ -655,7 +714,7 @@ int main(){
     
     int size=sizeof(evs)/sizeof(evs[0]);
     bool running=true;
-
+    
     while(running){
       
         
@@ -695,9 +754,10 @@ int main(){
                         flag|=O_NONBLOCK;
                         fcntl(clientfd,F_SETFL,flag);
                         new Epoll_manger::fd_data(addr,clientfd,ep);
-                        //printf("build new connect:%d\n",clientfd);
-                        continue;
-                    
+                        printf("build new connect:%d\n",clientfd);
+                        
+                        
+                        
                     }else{
                         if(errno==EAGAIN||errno==EWOULDBLOCK){
                             break;
@@ -719,12 +779,13 @@ int main(){
                 int fd=cur->getfd();           
                 if(fcntl(fd,F_GETFD)==-1)
                     continue;             
+
                 //printf("talk with:%d\n",fd);
                 if(evs[i].events&EPOLLIN)
                     if(!cur->on_readable())
                         continue;
-                if(evs[i].events&EPOLLOUT);
-                cur->on_writable();
+                if(evs[i].events&EPOLLOUT)
+                    cur->on_writable();
                     
                  //return 0;
             }

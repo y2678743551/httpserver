@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+</head>
+<body>
+    <h1 style="color: red;">
+        网路聊天室
+    </h1>
+    <p>
+        账号
+    </p>
+    <input type="text" id="username">
+    <p>
+        密码
+    </p>
+    <input type="text" id="code">
+    <br>
+    <button onclick="readInput()">读取</button>
+    <p id="result"></p>
+    <script>
+        function readInput(){
+            let name=document.getElementById('username').value;
+            let code=document.getElementById('code').value;
+            fetch('/api/submit',{
+                method:'POST',
+                headers:{
+                    'Content-Type':'application/json'
+                },
+                body:JSON.stringify({
+                    username:name,
+                    code:code
+                })
+            })
+            .then(response=>response.json())
+            .then(data=>{
+                console.log("响应",data);
+                
+                if(data.href){
+                    window.location.href=data.href
+                    }
+                document.getElementById('result').innerText=data.status;
+                }
+            ).catch(error=>(console.error('请求失败',error))
+            );
+            
+        }
+    </script>
+</body>
+</html>

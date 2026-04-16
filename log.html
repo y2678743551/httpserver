@@ -3,27 +3,29 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width,inintial-scale=1.0,user-scalble=yes">
     <title>Document</title>
+    
 </head>
 <body>
-    <h1 style="color: red;">
-        网路聊天室
-    </h1>
-    <p>
-        账号
-    </p>
-    <input type="text" id="username">
-    <p>
-        密码
-    </p>
-    <input type="text" id="code">
-    <br>
-    <button onclick="readInput()">读取</button>
-    <p id="result"></p>
+    <link rel="stylesheet" href="/style.css">
+    <div class="login-container ">
+        <h2 style="color: rgba(75, 255, 30, 0.507);">网路聊天室</h2>
+
+        <input type="text" id="username" style="color: rgb(0, 0, 0);" placeholder="账号" >
+        
+        <input type="text" id="password" style="color: rgb(0, 0, 0); " placeholder="密码">
+        
+        <button onclick="readInput()">读取</button>
+        <p id="result"></p>
+
+    </div>
+    
     <script>
         function readInput(){
+            //document.getElementById('result').innerText='accept';
             let name=document.getElementById('username').value;
-            let code=document.getElementById('code').value;
+            let code=document.getElementById('password').value;
             fetch('/api/submit',{
                 method:'POST',
                 headers:{
@@ -31,7 +33,7 @@
                 },
                 body:JSON.stringify({
                     username:name,
-                    code:code
+                    password:code
                 })
             })
             .then(response=>response.json())

@@ -1,0 +1,73 @@
+
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 16px;
+        }
+        .login-container {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.2);
+            width: 100%;
+            max-width: 600px;
+            padding: 32px 24px;
+            text-align: center;
+        }
+        h2 {
+            margin-top: 0;
+            margin-bottom: 24px;
+            color: #333;
+        }
+        input {
+            width: 100%;
+            margin: 20px;
+            padding: 12px;
+            max-width: 400px;
+            margin-bottom: 16px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            font-size: 1rem;
+            box-sizing: border-box;
+        }
+        button {
+            width: 100%;
+            margin: 30px;
+            padding: 12px;
+            max-width: 350px;
+            background-color: #667eea;
+            color: rgb(255, 255, 255);
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        button:hover {
+            background-color: #5a67d8;
+        }
+        .error {
+            color: #e53e3e;
+            margin-top: 12px;
+            font-size: 0.9rem;
+        }
+
+        /* 小屏幕微调 */
+        @media (max-width: 480px) {
+            .login-container {
+                padding: 24px 16px;
+            }
+            h2 {
+                font-size: 1.5rem;
+            }
+        }
+
+    

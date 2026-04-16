@@ -16,7 +16,8 @@
 #include<atomic>
 #include<nlohmann/json.hpp>
 #include"file_utils.hpp"
-
+#include<mysql/mysql.h>
+MYSQL *sql_conn;
 
 std::error_category const& gai_category(){
     static struct final: std::error_category{
@@ -30,6 +31,18 @@ std::error_category const& gai_category(){
     } instance;
     return instance;
 }
+std::error_category const& mysql_category(){
+    static struct final: std::error_category{
+        char const *name() const noexcept  override{
+            return "mysql";
+        }
+        std::string message(int err) const override{
+            return "MYSQL error code"+std::to_string(err);
+        }
+
+    } instance;
+    return instance;
+}
 template<int Except=0,class T>
 
 T check_error(const char*msg,T ret){
@@ -37,7 +50,7 @@ T check_error(const char*msg,T ret){
     if(ret==-1){
         if constexpr(Except!=0)
         {
-            if(errno==Except||errno==ECONNRESET||errno==EAGAIN)
+            if(errno==Except)
             {
                 return -1;
             }
@@ -48,12 +61,24 @@ T check_error(const char*msg,T ret){
         }
         return ret;
 }
+template<class T>
+
+T check_SQL_error(const char*msg,T ret){
+
+    if(ret==0){
+         printf("%s: %s\n",msg,strerror(errno));
+         auto ec=std::error_code(errno,mysql_category());
+         throw std::system_error(ec,msg);   
+        }
+        return ret;
+}
 #define STR(x) #x
 #define XSTR(x) STR(x)
 #define SOURCE_INFO_IMPL(file,line)   file ":" XSTR(line) ":"
 #define SOURCE_INFO() SOURCE_INFO_IMPL(__FILE__,__LINE__)
 #define CHECK_CALL_EXCEPT(except,func,...) check_error<except>(SOURCE_INFO() #func,func( __VA_ARGS__ ))
 #define CHECK_CALL(func,...) check_error(SOURCE_INFO() #func,func( __VA_ARGS__ ))
+#define CHECK_SQL_CALL(func,...) check_error(SOURCE_INFO() #func,func( __VA_ARGS__ ))
 struct socket_address_storage{
     union{
         sockaddr *m_addr;
@@ -423,12 +448,14 @@ class Epoll_manger
             std::string url=m_request_parser.url();
             std::string method=m_request_parser.method();
             if(url=="/"){
-                std::string content=file_get_content("../log.html");
+                std::string content=file_get_content("/home/vboxuser/c++/serve/log.html");
                 add_http_repose(content,"text/html");
             }
+            else
             if(url=="/api/submit"&&method=="POST")
             {   
                 nlohmann::json request_msgs;
+                
                 try
                 {
                     request_msgs=nlohmann::json::parse(m_request_parser.body());
@@ -436,19 +463,39 @@ class Epoll_manger
                 catch(const nlohmann::json::parse_error &e)
                 {
                     printf("%s: %s",SOURCE_INFO(),strerror(errno));
+                    return;
                 }
                 nlohmann::json response_msgs;
-                if(request_msgs.at("username")=="aa"&&request_msgs.at("code")=="111")
-                {   
+                
+                if(request_msgs.contains("username")&&request_msgs.contains("password"))
+                {   printf("%s\n %s\n",request_msgs.dump().c_str(),m_request_parser.body().c_str());
+                    std::string name=request_msgs.at("username");
+                    std::string password=request_msgs.at("password");
+                    std::string sql="SELECT id FROM users WHERE username = '" +name+"'AND password = '"+ password +"'";
                     
-                    response_msgs["href"]="../inner.html";
-                    response_msgs["status"]="OK";
-                    add_http_repose(response_msgs.dump(),"application/json");
+                    CHECK_SQL_CALL(mysql_query,sql_conn,sql.c_str());
                     
+                    MYSQL_RES*res=mysql_store_result(sql_conn);
+                    
+                    if(mysql_num_rows(res)>0)
+                    {response_msgs["href"]="../inner.html";
+                        response_msgs["status"]="OK";
+                        add_http_repose(response_msgs.dump(),"application/json");
+                    }else{
+
+                        response_msgs["status"]="用户不存在已注册新用户";
+                        sql="INSERT INTO users (username, password) VALUES ('"+name+"', '"+password+"')";
+                        CHECK_SQL_CALL(mysql_query,sql_conn, sql.c_str());
+                        
+                        
+                        
+                    }
+                    mysql_free_result(res);
                 }
+                
                 else
                 {
-                    printf("%s\n %s\n",request_msgs.dump().c_str(),m_request_parser.body().c_str());
+                    
                     
                     response_msgs["status"]="no";
                 
@@ -456,10 +503,19 @@ class Epoll_manger
                 }
             }else
             if(url=="/inner.html"){
-                    std::string content=file_get_content("../inner.html");
+                    std::string content=file_get_content("/home/vboxuser/c++/serve/inner.html");
                     add_http_repose(content,"text/html");
                     
                 }
+                else
+                if(url=="/style.css"){
+        
+                        std::string content = file_get_content("/home/vboxuser/c++/serve/style.css");
+                        //printf("%s",content.c_str());
+                        add_http_repose(content, "text/css");
+                        
+
+                    }
             
             
         }
@@ -595,7 +651,6 @@ class Epoll_manger
     };
 
     
-    Epoll_manger()=default;
     Epoll_manger(int fd):m_epfd(fd){}
     ~Epoll_manger(){
         for(auto conn:m_connections){
@@ -669,7 +724,18 @@ class address_resolver{
 
 
 int main(){
-   
+    
+
+
+    sql_conn=mysql_init(NULL);
+    if(sql_conn==NULL){
+        printf("连接mysql失败");
+        
+        mysql_close(sql_conn);
+        return -1;
+    }
+    CHECK_SQL_CALL (!mysql_real_connect,sql_conn, "127.0.0.1", "root", "123456", "chatroom", 3306, nullptr, 0);
+
     //使服务端可以从main结尾退出
     signal(SIGPIPE,SIG_IGN);
     sigset_t mask;
@@ -794,6 +860,8 @@ int main(){
     }
     ep.remove_fd(listenfd);
     ep.remove_fd(sfd);
+    mysql_close(sql_conn);
+
 return 0;
 
     

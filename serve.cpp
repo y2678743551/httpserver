@@ -367,7 +367,8 @@ class http_writer{
         }
 
 };
-class websocket_parser{
+struct websocket_data{
+protected:
     enum WSSTATE{
         Header1,Header2,Len16,Len64,Mask,Payload
     };
@@ -377,18 +378,43 @@ class websocket_parser{
     uint64_t m_payload_len=0;
     uint8_t m_mask_key[4];
     size_t m_mask_offset=0;
-    int m_bytes=0;
     std::string m_frame_payload="";
+    
+};
+class websocket_parser :protected websocket_data
+{   std::string m_message;
+    bool m_flag=0;
+    bool m_ping=0;
+    bool m_close=0;
+    int m_bytes=0;
 public:
-    int parser_frame(std::string buf){
-        int cur=0;
+    void _handle_frame(){
+        m_message+=m_frame_payload;
+        if(m_header1^0x80==0x80){
+            m_flag=1;
+        }else
+        if(m_header1^0x0F==0x9){
+            m_ping=1;
+        }else
+        if(m_header1^0x0F==0x8){
+            m_close=1;
+        }
+    }
+    size_t parser_frame(std::string buf){
+        size_t cur=0;
         int n=buf.length();
         while(cur<n){
             char ch=buf[cur++];
             switch(m_state){
                 case Header1:
-                    m_header1=ch;
+                    m_flag=0;
+                    m_ping=0;
+                    m_close=0;
+                    m_payload_len=0;
+                    m_frame_payload="";
+                    m_bytes=0;
                     m_state=Header2;
+                    m_header1=ch;
                     break;
                 case Header2:
                     m_header2=ch;
@@ -407,7 +433,7 @@ public:
                         else
                             m_state=Payload;
                         }
-                    
+                    m_bytes=0;
                     break;
                 case Len16:
                     
@@ -452,19 +478,60 @@ public:
                         }
                     
                     uint8_t opcode=m_header1&0x0F;
-                    //处理;
+                    _handle_frame();
                     m_state=Header1;
-                    m_payload_len=0;
-                    m_frame_payload="";
+                    
                     m_bytes=0;
+                    m_flag=1;
                     return cur;
                 }
                     break;
             }
         }
-        return 0;
+        return cur;
     }
+    bool if_finished(){
+        return m_flag;
+    }
+    bool if_ping(){
+        return m_ping;
+    }
+    bool if_close(){
+        return m_ping;
+    }
+    std::string get_payload(){
+        return m_frame_payload;
+    }
+    nlohmann::json get_message(){
+        nlohmann::json ret=nlohmann::json::parse(m_message);
+        m_message="";
+        return ret;
+    }
+};
+class websocket_builder {
+public:
     
+    static std::string build(u_int8_t header1,std::string payload){
+        std::string ret;
+        ret+=char(header1);
+        u_int64_t len=payload.size();
+        if(len<126)
+        ret+=char(len);
+        else
+        if(len==126){
+            ret+=char(126);
+            u_int16_t len16=u_int16_t(len);
+            ret+=char(len16>>8&0xFF)+char(len16&0xFF);
+            
+        }else{
+            ret+=char(127);
+            for(int i=0;i<8;i++){
+                ret+=char(len>>(56-i*8)&0xFF);
+            }
+        }
+        ret+=payload;
+        return ret;
+    }
 };
 class Epoll_manger
 {   int m_epfd;
@@ -525,16 +592,23 @@ class Epoll_manger
         bool m_close_after_send =false;
         enum MODE m_mode;
         
+        websocket_parser m_ws_parser;
         public:
 
         int &getfd(){return m_fd;}
+        void add_ws_repose(std::string frame){
+            bool ifempty=m_write_buffer.empty();
+            m_write_buffer+=frame;
+            if(ifempty){
+                m_ep.mod_fd(this,EPOLLIN|EPOLLOUT|EPOLLET); 
+            }  
+        }
         void add_http_repose(std::string body,std::string type,int method=200){
             if(body.empty()){
             
                     body="空";
            
                 }
-
                 //http_respose_parser res_writer;
                 http_writer head_buf;
                 head_buf.head_begin(method);
@@ -551,7 +625,24 @@ class Epoll_manger
                     m_ep.mod_fd(this,EPOLLIN|EPOLLOUT|EPOLLET); 
                 }  
         }
-        
+        void handle_ws_request(){
+            nlohmann::json request_message=m_ws_parser.get_message();
+            if(request_message.contains("type"))
+                {   
+                    std::string type=request_message["type"];
+                    if(type=="login"){
+
+                    }else
+                    if(type=="inner"){
+
+                    }else{
+
+                    }
+                }else{
+                    printf("d：%d，无效JSON",m_fd);
+                    return;
+                }
+        }
         void handle_http_request(http_request_parser &request_parser){
             printf("%s\n%s\n",request_parser.url().c_str(),request_parser.method().c_str());
             std::string upgrade = request_parser.get_header("upgrade");
@@ -643,17 +734,12 @@ class Epoll_manger
                         response_msgs["status"]="用户不存在已注册新用户";
                         sql="INSERT INTO users (username, password) VALUES ('"+name+"', '"+password+"')";
                         CHECK_SQL_CALL(mysql_query,sql_conn, sql.c_str());
-                        
-                        
-                        
                     }
                     mysql_free_result(res);
                 }
                 
                 else
                 {
-                    
-                    
                     response_msgs["status"]="no";
                 
                     add_http_repose(response_msgs.dump(),"application/json");
@@ -689,7 +775,23 @@ class Epoll_manger
                         while(true){
                             if(m_mode==MODE::WebSocket)
                             {
-
+                                
+                                int consumed=m_ws_parser.parser_frame(m_read_buffer);
+                            
+                                if(consumed==0)
+                                    break;
+                                m_read_buffer.erase(0,consumed);
+                                if(m_ws_parser.if_ping()){
+                                    add_ws_repose(websocket_builder::build(0x8A,m_ws_parser.get_payload()));
+                                }
+                                if(m_ws_parser.if_close()){
+                                    m_ep.delete_from_epoll(this);
+                                }
+                                if(m_ws_parser.if_finished())
+                                {
+                                    handle_ws_request();
+                                }
+                                
                             }
                             else
                             if(m_mode==MODE::Http){

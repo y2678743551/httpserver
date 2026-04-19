@@ -11,7 +11,31 @@
     <input type="text" id="msg" placeholder="请输入文本">
     <button onclick="readInput()" >读取</button>
     <p id="result"></p>
-    
+    <script>
+        function readInput(){
+            //document.getElementById('result').innerText='accept';
+            let msg=document.getElementById('msg').value;
+
+            fetch('/api/submit',{
+                method:'POST',
+                headers:{
+                    'Content-Type':'application/json'
+                },
+                body:JSON.stringify({
+                    msg:msg
+                })
+            })
+            .then(response=>response.json())
+            .then(data=>{
+                console.log("响应",data);
+
+                document.getElementById('result').innerText=data.status;
+                }
+            ).catch(error=>(console.error('请求失败',error))
+            );
+            
+        }
+    </script>
 
 </body>
 </html>

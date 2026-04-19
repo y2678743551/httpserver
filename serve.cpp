@@ -15,8 +15,10 @@
 #include<signal.h>
 #include<atomic>
 #include<nlohmann/json.hpp>
-#include"file_utils.hpp"
+#include<openssl/sha.h>
+#include<openssl/evp.h>
 #include<mysql/mysql.h>
+#include"file_utils.hpp"
 MYSQL *sql_conn;
 
 std::error_category const& gai_category(){
@@ -87,7 +89,6 @@ struct socket_address_storage{
     };
     socklen_t m_addrlen=sizeof(sockaddr_storage);
 };
-
 using StringMap=std::map<std::string,std::string>;
 class http11_head_parser{
     public:
@@ -172,7 +173,6 @@ class http11_head_parser{
     
    
 };
-
 class http_base_parser{
     http11_head_parser m_parser;
     size_t m_left_length=0;
@@ -206,6 +206,13 @@ class http_base_parser{
         }
             return headline.substr(0,space);
         
+    }
+    std::string get_header(std::string key){
+        auto &keys=headers();
+        if(keys.find(key)!=keys.end()){
+            return  keys[key];
+        }
+        return "";
     }
     std::string _head_second(){
         auto &headline=m_parser.head_line();
@@ -293,10 +300,10 @@ class http_base_parser{
         m_parser.reset();
     }
 };
-
 class http_request_parser :public http_base_parser
 {  
     public:
+    
     std::string method(){
         return this->_head_first();
     }
@@ -307,7 +314,6 @@ class http_request_parser :public http_base_parser
         return this->_head_third();
     }
 };
-
 class http_respose_parser :public http_base_parser
 {   
     public:
@@ -340,10 +346,10 @@ class http_writer{
     std::string& head(){
         return m_head;
     }
-    void head_begin(int status){
+    void head_begin(int status,std::string version="OK"){
         assert(!m_begin);
         assert(!m_end);
-        m_head.append("HTTP/1.1 "+std::to_string(status)+" OK\r\n");
+        m_head.append("HTTP/1.1 "+std::to_string(status)+" "+version+"\r\n");
         m_begin=true;        
         return;
     }
@@ -361,7 +367,105 @@ class http_writer{
         }
 
 };
-        
+class websocket_parser{
+    enum WSSTATE{
+        Header1,Header2,Len16,Len64,Mask,Payload
+    };
+    enum WSSTATE m_state=WSSTATE::Header1;
+    uint8_t m_header1;
+    uint8_t m_header2;
+    uint64_t m_payload_len=0;
+    uint8_t m_mask_key[4];
+    size_t m_mask_offset=0;
+    int m_bytes=0;
+    std::string m_frame_payload="";
+public:
+    int parser_frame(std::string buf){
+        int cur=0;
+        int n=buf.length();
+        while(cur<n){
+            char ch=buf[cur++];
+            switch(m_state){
+                case Header1:
+                    m_header1=ch;
+                    m_state=Header2;
+                    break;
+                case Header2:
+                    m_header2=ch;
+                    m_payload_len= m_header2 & 0x7F;
+                    if(m_payload_len==126){
+                        m_state=Len16;
+                        m_payload_len=0;
+                        
+                    }else
+                    if(m_payload_len==127){
+                        m_state=Len64;
+                        m_payload_len=0;
+                    }else
+                    {   if(m_header2&0x80)
+                            m_state=Mask;
+                        else
+                            m_state=Payload;
+                        }
+                    
+                    break;
+                case Len16:
+                    
+                    m_payload_len=(m_payload_len<<8)|ch;
+                    if(++m_bytes==2){
+                        if(m_header2&0x80)
+                            m_state=Mask;
+                        else
+                            m_state=Payload;
+                        m_bytes=0;
+                        }
+
+                    break;
+                case Len64:
+                    
+                    m_payload_len=(m_payload_len<<8)|ch;
+                    if(++m_bytes==8){
+                        if(m_header2&0x80)
+                            m_state=Mask;
+                        else
+                            m_state=Payload;
+                        m_bytes=0;
+                        }
+                    
+                    break;
+                case Mask:
+                    m_mask_key[m_bytes]=ch;
+                    if(++m_bytes==4){
+                        
+                        m_state=Payload;
+                        m_bytes=0;
+                        }
+                    break;
+                case Payload:
+                    m_frame_payload+=ch;
+                    if(++m_bytes==m_payload_len){
+                        if(m_header2&0x80){
+                            int i=0;
+                            for(auto &c:m_frame_payload){
+                                c^=m_mask_key[i++%4];
+                            }
+                        }
+                    
+                    uint8_t opcode=m_header1&0x0F;
+                    //处理;
+                    m_state=Header1;
+                    m_payload_len=0;
+                    m_frame_payload="";
+                    m_bytes=0;
+                    return cur;
+                }
+                    break;
+            }
+        }
+        return 0;
+    }
+    
+};
 class Epoll_manger
 {   int m_epfd;
     public:
@@ -407,7 +511,10 @@ class Epoll_manger
         CHECK_CALL(epoll_ctl,m_epfd,EPOLL_CTL_MOD,data->getfd(),&ev);
     }
     class fd_data{
-        http_request_parser m_request_parser;
+        enum MODE{
+            None,Http,WebSocket
+        };
+        
         std::string m_read_buffer="";//读缓冲区
         
         std::string m_write_buffer="";//写缓冲区
@@ -415,12 +522,13 @@ class Epoll_manger
         
         Epoll_manger &m_ep;
         socket_address_storage m_addr;
-
+        bool m_close_after_send =false;
+        enum MODE m_mode;
         
         public:
 
         int &getfd(){return m_fd;}
-        void add_http_repose(std::string body,std::string type){
+        void add_http_repose(std::string body,std::string type,int method=200){
             if(body.empty()){
             
                     body="空";
@@ -429,7 +537,7 @@ class Epoll_manger
 
                 //http_respose_parser res_writer;
                 http_writer head_buf;
-                head_buf.head_begin(200);
+                head_buf.head_begin(method);
            
                 head_buf.head_write("Server","co_http");
                 
@@ -443,10 +551,59 @@ class Epoll_manger
                     m_ep.mod_fd(this,EPOLLIN|EPOLLOUT|EPOLLET); 
                 }  
         }
-        void handle_request(){
-            printf("%s\n%s\n",m_request_parser.url().c_str(),m_request_parser.method().c_str());
-            std::string url=m_request_parser.url();
-            std::string method=m_request_parser.method();
+        
+        void handle_http_request(http_request_parser &request_parser){
+            printf("%s\n%s\n",request_parser.url().c_str(),request_parser.method().c_str());
+            std::string upgrade = request_parser.get_header("upgrade");
+            std::string connection = request_parser.get_header("connection");
+            std::string key = request_parser.get_header("sec-websocket-key");
+            std::string version = request_parser.get_header("sec-websocket-version");
+            
+            if (upgrade == "websocket" && (connection.find("upgrade") != std::string::npos) &&!key.empty()) {
+                if (version != "13") {
+                    http_writer head_buf;
+                    head_buf.head_begin(426, "Upgrade Required");
+                    head_buf.head_write("Sec-WebSocket-Version", "13");
+                    head_buf.head_write("Connection", "close");
+                    head_buf.head_write("Content-Length", 0);
+                    head_buf.head_end();
+
+                    m_write_buffer += head_buf.head();
+
+                    m_ep.mod_fd(this, EPOLLOUT | EPOLLET);
+                    m_close_after_send = true;  
+                    return;
+                }
+                
+                std::string accept_str = key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+                unsigned char hash[SHA_DIGEST_LENGTH];
+                SHA1((const unsigned char*)accept_str.c_str(), accept_str.size(), hash);
+                
+               
+                char base64[28]; 
+                EVP_EncodeBlock((unsigned char*)base64, hash, SHA_DIGEST_LENGTH);
+                std::string accept(base64); 
+                
+   
+                http_writer head_buf;
+                head_buf.head_begin(101, "Switching Protocols");
+                head_buf.head_write("Upgrade", "websocket");
+                head_buf.head_write("Connection", "Upgrade");
+                head_buf.head_write("Sec-WebSocket-Accept", accept);
+                head_buf.head_end();
+                
+
+                bool was_empty = m_write_buffer.empty();
+                m_write_buffer += head_buf.head();
+                if (was_empty) {
+                    m_ep.mod_fd(this, EPOLLIN | EPOLLOUT | EPOLLET);
+                }
+
+                m_mode = MODE::WebSocket;
+                return;
+            }
+            std::string url=request_parser.url();
+            std::string method=request_parser.method();
             if(url=="/"){
                 std::string content=file_get_content("/home/vboxuser/c++/serve/log.html");
                 add_http_repose(content,"text/html");
@@ -458,7 +615,7 @@ class Epoll_manger
                 
                 try
                 {
-                    request_msgs=nlohmann::json::parse(m_request_parser.body());
+                    request_msgs=nlohmann::json::parse(request_parser.body());
                 }
                 catch(const nlohmann::json::parse_error &e)
                 {
@@ -468,7 +625,7 @@ class Epoll_manger
                 nlohmann::json response_msgs;
                 
                 if(request_msgs.contains("username")&&request_msgs.contains("password"))
-                {   printf("%s\n %s\n",request_msgs.dump().c_str(),m_request_parser.body().c_str());
+                {   printf("%s\n %s\n",request_msgs.dump().c_str(),request_parser.body().c_str());
                     std::string name=request_msgs.at("username");
                     std::string password=request_msgs.at("password");
                     std::string sql="SELECT id FROM users WHERE username = '" +name+"'AND password = '"+ password +"'";
@@ -528,18 +685,28 @@ class Epoll_manger
                     ssize_t ret=recv(m_fd,buf,sizeof(buf),0);
                     if(ret>0){
                         m_read_buffer.append(buf,ret);
-
-                        while(true){
-                            int consumed=m_request_parser.push_chunk(m_read_buffer);
                         
-                            if(consumed==0)
-                                break;
-                            m_read_buffer.erase(0,consumed);
-                            handle_request();
-                            
+                        while(true){
+                            if(m_mode==MODE::WebSocket)
+                            {
 
-                            m_request_parser.reset();
-                            continue;
+                            }
+                            else
+                            if(m_mode==MODE::Http){
+                                http_request_parser request_parser;
+                                int consumed=request_parser.push_chunk(m_read_buffer);
+                            
+                                if(consumed==0)
+                                    break;
+                                m_read_buffer.erase(0,consumed);
+
+                                handle_http_request(request_parser);
+                                
+
+                                request_parser.reset();
+                            }
+                            
+                            
                         }
 
                     }
@@ -568,7 +735,7 @@ class Epoll_manger
                    
                     
                 }
-                //assert(m_request_parser.request_finish());
+                //assert(request_parser.request_finish());
                 
                 
                 
@@ -586,7 +753,9 @@ class Epoll_manger
                         if(ret>=0){
                         m_write_buffer.erase(0,ret);
                         if(m_write_buffer.empty()){
-                            
+                            if(m_close_after_send){
+                                m_ep.delete_from_epoll(this);
+                            }
                             m_ep.mod_fd(this,EPOLLIN|EPOLLET);
                             return true;
                         }
@@ -627,19 +796,14 @@ class Epoll_manger
             m_addr=addr;
         }
         
-        void add_request(std::string str){
-            m_read_buffer=str;
-            m_request_parser.push_chunk(m_read_buffer);
-
-            return;
-        }
+        
         
         fd_data()=default;
         
-        fd_data(int fd,Epoll_manger &ep):m_fd(fd),m_ep(ep){
+        fd_data(int fd,Epoll_manger &ep):m_fd(fd),m_ep(ep),m_mode(MODE::None){
             ep.add_to_epoll(fd,this);
         }
-        fd_data(socket_address_storage addr,int fd,Epoll_manger &ep):m_fd(fd),m_ep(ep),m_addr(addr){
+        fd_data(socket_address_storage addr,int fd,Epoll_manger &ep):m_fd(fd),m_ep(ep),m_addr(addr),m_mode(MODE::Http){
             ep.add_to_epoll(fd,this);
             
             

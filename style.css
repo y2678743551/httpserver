@@ -60,6 +60,12 @@
             font-size: 0.9rem;
         }
 
+        .page{
+            display: none;
+        }
+        .page.active{
+            display: block;
+        }
         /* 小屏幕微调 */
         @media (max-width: 480px) {
             .login-container {

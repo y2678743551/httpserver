@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width,inintial-scale=1.0,user-scalble=yes">
+    <title>Document</title>
+    
+</head>
+<body>
+    <link rel="stylesheet" href="/style.css">
+    <div id="login" class="page">
+        <h2 style="color: rgba(75, 255, 30, 0.507);">网路聊天室</h2>
+
+        <input type="text" id="username" style="color: rgb(0, 0, 0);" placeholder="账号" >
+        
+        <input type="text" id="password" style="color: rgb(0, 0, 0); " placeholder="密码">
+        
+        <button onclick="login()">读取</button>
+        <p id="result"></p>
+
+    </div>
+    <div id="chat" class="page">
+        <div id="message"></div>
+        <input type="text" id="msg" placeholder="请输入文本">
+        <button onclick="sendMessage()" >读取</button>
+        <p id="result"></p>
+    </div>
+    <script>
+        function login(){
+            //document.getElementById('result').innerText='accept';
+            let name=document.getElementById('username').value;
+            let code=document.getElementById('password').value;
+            fetch('/api/submit',{
+                method:'POST',
+                headers:{
+                    'Content-Type':'application/json'
+                },
+                body:JSON.stringify({
+
+                    username:name,
+                    password:code
+                })
+            })
+            .then(response=>response.json())
+            .then(data=>{
+
+                
+                if(data.status==='OK'){
+                    localStorage.setItem('username',name);
+                    history.pushState({page:'chat'},'','/chat');
+                    showPage('chat');
+                    initWebsocket();
+                }else
+                document.getElementById('result').innerText=data.status;
+                }
+            ).catch(error=>(console.error('请求失败',error))
+            );
+            
+        }
+        function showPage(pageId){
+            document.querySelectorAll('.page').forEach(page=>{
+                page.classList.remove('active');
+            })
+            document.getElementById(pageId).classList.add('active');
+        }
+        let ws=null;
+        function initWebsocket(){
+            if(ws&&ws.readyState===WebSocket.OPEN) return;
+            ws=new WebSocket("ws//"+location.host+'/chat');
+            ws.onopen=()=>{
+
+                ws.send(JSON.stringify({type:'chat',user: localStorage.getItem('username')}));
+            }
+            ws.onmessage=(event)=>{
+                let msg =JSON.parse(event.data);
+                let div=document.createElement('div');
+                div.innerText=msg.form+': '+msg.content;
+                document.getElementById('message').appendChild(div);
+            }
+            ws.onclose=()=>{
+                setTimeout(initWebsocket,3000);
+            }
+        }
+        function sendMessage(){
+            let input=document.getElementById('input');
+            if(input.value&&ws&&ws.readyState===WebSocket.OPEN){
+                ws.send(JSON.stringify({type:'chat',content: input.value,user: localStorage.getItem('username')}));
+
+            }
+        }
+        window.addEventListener('popstate',function(event){
+            if(event.state&&event.state.page==='chat'){
+                showPage('chat');
+                if(!ws||ws.readyState!==WebSocket.OPEN) 
+                initWebsocket(); 
+            }else
+            if(event.state&&event.state.page==='login'){
+                showPage('chat');
+                if(ws) ws.close(); 
+            }
+        }
+        );
+        if(location.pathname==='/chat'&&localStorage.getItem('username')){
+            showPage('chat');
+            initWebsocket();
+        }else{
+            showPage('login');
+        }
+        
+    </script>
+</body>
+</html>

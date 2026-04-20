@@ -389,7 +389,7 @@ class websocket_parser :protected websocket_data
     int m_bytes=0;
 public:
     void _handle_frame(){
-        m_message+=m_frame_payload;
+        m_message=m_frame_payload;
         if(m_header1^0x80==0x80){
             m_flag=1;
         }else
@@ -626,12 +626,12 @@ class Epoll_manger
                 }  
         }
         void handle_ws_request(){
-            nlohmann::json request_message=m_ws_parser.get_message();
-            if(request_message.contains("type"))
+            nlohmann::json request_msgs=m_ws_parser.get_message();
+            if(request_msgs.contains("type"))
                 {   
-                    std::string type=request_message["type"];
+                    std::string type=request_msgs["type"];
                     if(type=="login"){
-
+                        printf("%d:login",m_fd);
                     }else
                     if(type=="inner"){
 
@@ -651,6 +651,7 @@ class Epoll_manger
             std::string version = request_parser.get_header("sec-websocket-version");
             
             if (upgrade == "websocket" && (connection.find("upgrade") != std::string::npos) &&!key.empty()) {
+                printf("%s\n %s\n",version.c_str(),key.c_str());
                 if (version != "13") {
                     http_writer head_buf;
                     head_buf.head_begin(426, "Upgrade Required");
@@ -696,7 +697,7 @@ class Epoll_manger
             std::string url=request_parser.url();
             std::string method=request_parser.method();
             if(url=="/"){
-                std::string content=file_get_content("/home/vboxuser/c++/serve/log.html");
+                std::string content=file_get_content("/home/vboxuser/c++/serve/index.html");
                 add_http_repose(content,"text/html");
             }
             else
@@ -726,9 +727,10 @@ class Epoll_manger
                     MYSQL_RES*res=mysql_store_result(sql_conn);
                     
                     if(mysql_num_rows(res)>0)
-                    {response_msgs["href"]="../inner.html";
+                    {
                         response_msgs["status"]="OK";
                         add_http_repose(response_msgs.dump(),"application/json");
+                        m_mode=MODE::WebSocket;
                     }else{
 
                         response_msgs["status"]="用户不存在已注册新用户";
@@ -745,12 +747,12 @@ class Epoll_manger
                     add_http_repose(response_msgs.dump(),"application/json");
                 }
             }else
-            if(url=="/inner.html"){
+            /*if(url=="/inner.html"){
                     std::string content=file_get_content("/home/vboxuser/c++/serve/inner.html");
                     add_http_repose(content,"text/html");
                     
                 }
-                else
+                else*/
                 if(url=="/style.css"){
         
                         std::string content = file_get_content("/home/vboxuser/c++/serve/style.css");

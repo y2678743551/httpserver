@@ -155,7 +155,7 @@ class http11_head_parser{
             {   
                 m_head_finished=1;
                 
-                m_head.resize(head_len);
+                m_head.resize(head_len+4);
                 _extract_head();
                 return head_len+4;
             }
@@ -386,18 +386,20 @@ class websocket_parser :protected websocket_data
     bool m_flag=0;
     bool m_ping=0;
     bool m_close=0;
-    int m_bytes=0;
+    u_int64_t m_bytes=0;
 public:
     void _handle_frame(){
-        m_message=m_frame_payload;
-        if(m_header1^0x80==0x80){
+        uint8_t opcode = m_header1 & 0x0F;
+        if (opcode == 0x1) { 
+            
+            m_message += m_frame_payload;
+            if((m_header1^0x80)==0x80){
             m_flag=1;
-        }else
-        if(m_header1^0x0F==0x9){
-            m_ping=1;
-        }else
-        if(m_header1^0x0F==0x8){
-            m_close=1;
+            }
+        } else if (opcode == 0x9) {
+            m_ping = 1;
+        } else if (opcode == 0x8) {
+            m_close = 1;
         }
     }
     size_t parser_frame(std::string buf){
@@ -477,7 +479,7 @@ public:
                             }
                         }
                     
-                    uint8_t opcode=m_header1&0x0F;
+
                     _handle_frame();
                     m_state=Header1;
                     
@@ -497,14 +499,26 @@ public:
         return m_ping;
     }
     bool if_close(){
-        return m_ping;
+        return m_close;
     }
     std::string get_payload(){
         return m_frame_payload;
     }
     nlohmann::json get_message(){
-        nlohmann::json ret=nlohmann::json::parse(m_message);
+        printf("\n\n%s\n\n",m_message.c_str());
+        nlohmann::json ret;
+
+        try{
+                ret=nlohmann::json::parse(m_message);
+            }
+            catch(const nlohmann::json::parse_error &e)
+            {
+                printf("%s: %s\n",SOURCE_INFO(),strerror(errno));
+                return NULL;
+            }
+        
         m_message="";
+
         return ret;
     }
 };
@@ -596,6 +610,9 @@ class Epoll_manger
         public:
 
         int &getfd(){return m_fd;}
+        enum MODE &getmode(){
+            return m_mode;
+        }
         void add_ws_repose(std::string frame){
             bool ifempty=m_write_buffer.empty();
             m_write_buffer+=frame;
@@ -626,15 +643,21 @@ class Epoll_manger
                 }  
         }
         void handle_ws_request(){
+            printf("%d:login\n",m_fd);
             nlohmann::json request_msgs=m_ws_parser.get_message();
             if(request_msgs.contains("type"))
                 {   
                     std::string type=request_msgs["type"];
                     if(type=="login"){
-                        printf("%d:login",m_fd);
+                        
                     }else
-                    if(type=="inner"){
-
+                    if(type=="chat"){
+                        if(request_msgs.contains("content"))
+                        for(auto &conn:m_ep.m_connections){
+                            if(conn->getmode()==MODE::WebSocket){
+                                conn->add_ws_repose(websocket_builder::build(0x81,request_msgs.dump()));
+                            }
+                        }
                     }else{
 
                     }
@@ -644,15 +667,22 @@ class Epoll_manger
                 }
         }
         void handle_http_request(http_request_parser &request_parser){
-            printf("%s\n%s\n",request_parser.url().c_str(),request_parser.method().c_str());
+          printf("=== handle_request called ===%d\n",m_fd);
+            printf("URL: %s\n", request_parser.url().c_str());
+            printf("Method: %s\n", request_parser.method().c_str());
+            printf("All headers:\n");
+            for (auto& kv : request_parser.headers()) {
+                printf("  %s: %s\n", kv.first.c_str(), kv.second.c_str());
+            }
             std::string upgrade = request_parser.get_header("upgrade");
             std::string connection = request_parser.get_header("connection");
             std::string key = request_parser.get_header("sec-websocket-key");
             std::string version = request_parser.get_header("sec-websocket-version");
             
-            if (upgrade == "websocket" && (connection.find("upgrade") != std::string::npos) &&!key.empty()) {
-                printf("%s\n %s\n",version.c_str(),key.c_str());
+            if (upgrade == "websocket" && (connection.find("Upgrade") != std::string::npos) &&!key.empty()) {
+                
                 if (version != "13") {
+                    
                     http_writer head_buf;
                     head_buf.head_begin(426, "Upgrade Required");
                     head_buf.head_write("Sec-WebSocket-Version", "13");
@@ -666,7 +696,7 @@ class Epoll_manger
                     m_close_after_send = true;  
                     return;
                 }
-                
+       
                 std::string accept_str = key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
                 unsigned char hash[SHA_DIGEST_LENGTH];
                 SHA1((const unsigned char*)accept_str.c_str(), accept_str.size(), hash);
@@ -696,7 +726,7 @@ class Epoll_manger
             }
             std::string url=request_parser.url();
             std::string method=request_parser.method();
-            if(url=="/"){
+            if(url=="/"||url=="/chat"){
                 std::string content=file_get_content("/home/vboxuser/c++/serve/index.html");
                 add_http_repose(content,"text/html");
             }
@@ -717,7 +747,7 @@ class Epoll_manger
                 nlohmann::json response_msgs;
                 
                 if(request_msgs.contains("username")&&request_msgs.contains("password"))
-                {   printf("%s\n %s\n",request_msgs.dump().c_str(),request_parser.body().c_str());
+                {   //printf("%s\n %s\n",request_msgs.dump().c_str(),request_parser.body().c_str());
                     std::string name=request_msgs.at("username");
                     std::string password=request_msgs.at("password");
                     std::string sql="SELECT id FROM users WHERE username = '" +name+"'AND password = '"+ password +"'";
@@ -730,7 +760,7 @@ class Epoll_manger
                     {
                         response_msgs["status"]="OK";
                         add_http_repose(response_msgs.dump(),"application/json");
-                        m_mode=MODE::WebSocket;
+                        
                     }else{
 
                         response_msgs["status"]="用户不存在已注册新用户";
@@ -761,7 +791,12 @@ class Epoll_manger
                         
 
                     }
-            
+                else
+                if(url=="/favicon.ico"){
+                        add_http_repose("404 Not Found", "text/plain", 404);
+                    }
+
+               
             
         }
         bool on_readable(){//从客户端读取数据
@@ -771,6 +806,7 @@ class Epoll_manger
                 while(true) {
 
                     ssize_t ret=recv(m_fd,buf,sizeof(buf),0);
+                    //printf("%s\n",buf);
                     if(ret>0){
                         m_read_buffer.append(buf,ret);
                         
@@ -785,9 +821,13 @@ class Epoll_manger
                                 m_read_buffer.erase(0,consumed);
                                 if(m_ws_parser.if_ping()){
                                     add_ws_repose(websocket_builder::build(0x8A,m_ws_parser.get_payload()));
+                                    on_writable();
                                 }
                                 if(m_ws_parser.if_close()){
+                                    add_ws_repose(websocket_builder::build(0x88,m_ws_parser.get_payload()));
+                                    on_writable();
                                     m_ep.delete_from_epoll(this);
+                                    return false;
                                 }
                                 if(m_ws_parser.if_finished())
                                 {

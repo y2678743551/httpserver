@@ -66,8 +66,8 @@
         }
         let ws=null;
         function initWebsocket(){
-            if(ws&&ws.readyState===WebSocket.OPEN) return;
-            ws=new WebSocket("ws//"+location.host+'/chat');
+            if(ws&&(ws.readyState===WebSocket.OPEN||ws.readyState===WebSocket.CONNECTING)) return;
+            ws=new WebSocket("ws://"+location.host+'/chat');
             ws.onopen=()=>{
 
                 ws.send(JSON.stringify({type:'chat',user: localStorage.getItem('username')}));
@@ -75,15 +75,16 @@
             ws.onmessage=(event)=>{
                 let msg =JSON.parse(event.data);
                 let div=document.createElement('div');
-                div.innerText=msg.form+': '+msg.content;
+                div.innerText=msg.user+': '+msg.content;
                 document.getElementById('message').appendChild(div);
             }
             ws.onclose=()=>{
+                ws=null;
                 setTimeout(initWebsocket,3000);
             }
         }
         function sendMessage(){
-            let input=document.getElementById('input');
+            let input=document.getElementById('msg');
             if(input.value&&ws&&ws.readyState===WebSocket.OPEN){
                 ws.send(JSON.stringify({type:'chat',content: input.value,user: localStorage.getItem('username')}));
 
@@ -96,8 +97,8 @@
                 initWebsocket(); 
             }else
             if(event.state&&event.state.page==='login'){
-                showPage('chat');
-                if(ws) ws.close(); 
+                showPage('login');
+                //if(ws) ws.close(); 
             }
         }
         );

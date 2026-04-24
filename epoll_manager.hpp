@@ -3,8 +3,8 @@
 #include<openssl/sha.h>
 #include<openssl/evp.h>
 #include"sql_util.hpp"
-#include"macro_chechker.hpp
-#include"http_parser.hpp
+#include"macro_chechker.hpp"
+#include"http_parser.hpp"
 #include"websocket_parser.hpp"
 #include"file_utils.hpp"
 #include"addr_util.hpp"
@@ -105,7 +105,6 @@ class Epoll_manger
                 }  
         }
         void handle_ws_request(){
-            printf("%d:login\n",m_fd);
             nlohmann::json request_msgs=m_ws_parser.get_message();
             if(request_msgs.contains("type"))
                 {   
@@ -129,13 +128,7 @@ class Epoll_manger
                 }
         }
         void handle_http_request(http_request_parser &request_parser){
-          printf("=== handle_request called ===%d\n",m_fd);
-            printf("URL: %s\n", request_parser.url().c_str());
-            printf("Method: %s\n", request_parser.method().c_str());
-            printf("All headers:\n");
-            for (auto& kv : request_parser.headers()) {
-                printf("  %s: %s\n", kv.first.c_str(), kv.second.c_str());
-            }
+            
             std::string upgrade = request_parser.get_header("upgrade");
             std::string connection = request_parser.get_header("connection");
             std::string key = request_parser.get_header("sec-websocket-key");
@@ -415,7 +408,7 @@ class Epoll_manger
             
         }
         ~fd_data(){
-            printf("delete fd %d\n\n",m_fd);
+            //printf("delete fd %d\n\n",m_fd);
             close(m_fd);
         }
     };
@@ -426,7 +419,7 @@ class Epoll_manger
         for(auto conn:m_connections){
             delete_from_epoll(conn);
         }
-        printf("closed %d \n",m_epfd);
+        //printf("closed %d \n",m_epfd);
         close(m_epfd);
     }
 };

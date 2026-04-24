@@ -99,7 +99,7 @@ int main(){
                         flag|=O_NONBLOCK;
                         fcntl(clientfd,F_SETFL,flag);
                         new Epoll_manger::fd_data(addr,clientfd,ep);
-                        printf("build new connect:%d\n",clientfd);
+                        //printf("build new connect:%d\n",clientfd);
                         
                         
                         

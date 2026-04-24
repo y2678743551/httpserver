@@ -141,7 +141,7 @@ public:
         return m_frame_payload;
     }
     nlohmann::json get_message(){
-        printf("\n\n%s\n\n",m_message.c_str());
+        //printf("\n\n%s\n\n",m_message.c_str());
         nlohmann::json ret;
 
         try{

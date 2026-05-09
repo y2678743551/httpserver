@@ -45,7 +45,7 @@ int main(){
         perror("epoll_create");
         exit(0);
     }
-    Epoll_manger ep(epfd);
+    Epoll_manager ep(epfd);
     
     int listenfd=entry.create_socket_and_bind();
     ep.add_fd(listenfd);
@@ -98,7 +98,8 @@ int main(){
                         int flag=fcntl(clientfd,F_GETFL);
                         flag|=O_NONBLOCK;
                         fcntl(clientfd,F_SETFL,flag);
-                        new Epoll_manger::fd_data(addr,clientfd,ep);
+                    
+                        ep.add_to_epoll(std::make_shared<fd_data>(addr,clientfd,ep));
                         //printf("build new connect:%d\n",clientfd);
                         
                         
@@ -120,17 +121,16 @@ int main(){
                 
             }
             }else{      //处理客户端
-                auto cur=(Epoll_manger::fd_data*)evs[i].data.ptr;
-                int fd=cur->getfd();           
+                int fd=evs[i].data.fd;
+
                 if(fcntl(fd,F_GETFD)==-1)
                     continue;             
 
                 //printf("talk with:%d\n",fd);
                 if(evs[i].events&EPOLLIN)
-                    if(!cur->on_readable())
-                        continue;
+                    ep.read(fd);
                 if(evs[i].events&EPOLLOUT)
-                    cur->on_writable();
+                    ep.write(fd);
                     
                  //return 0;
             }

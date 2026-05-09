@@ -9,7 +9,7 @@
 #include"websocket_parser.hpp"
 #include"file_utils.hpp"
 #include"addr_util.hpp"
-class Epoll_manager ;
+class Epoll_wrapper ;
 enum MODE{
     None,Http,WebSocket
     };
@@ -21,7 +21,7 @@ class fd_data{
         std::string m_write_buffer="";//写缓冲区
         int m_fd;
         
-        Epoll_manager  &m_ep;
+        Epoll_wrapper  &m_ep;
         socket_address_storage m_addr;
         bool m_close_after_send =false;
         enum MODE m_mode;
@@ -39,12 +39,12 @@ class fd_data{
     bool on_writable();
     void build_addr(socket_address_storage addr);
     fd_data()=default;
-    fd_data(int fd,Epoll_manager  &ep);
-    fd_data(socket_address_storage addr,int fd,Epoll_manager  &ep);
+    fd_data(int fd,Epoll_wrapper  &ep);
+    fd_data(socket_address_storage addr,int fd,Epoll_wrapper  &ep);
     ~fd_data();
 };
 
-class Epoll_manager 
+class Epoll_wrapper 
 {   int m_epfd;
     std::map<int,std::shared_ptr<fd_data>> m_connections;
     public:
@@ -75,8 +75,8 @@ class Epoll_manager
         auto it=m_connections.find(fd);
         if(it!=m_connections.end())
         {
-            m_connections.erase(it);
             CHECK_CALL(epoll_ctl,m_epfd,EPOLL_CTL_DEL,fd,NULL);
+            m_connections.erase(it);
         }
     }
     void broad_send(nlohmann::json msg){
@@ -108,8 +108,8 @@ class Epoll_manager
     
 
     
-    Epoll_manager (int fd):m_epfd(fd){}
-    ~Epoll_manager (){
+    Epoll_wrapper (int fd):m_epfd(fd){}
+    ~Epoll_wrapper (){
         
         //printf("closed %d \n",m_epfd);
         close(m_epfd);
@@ -118,11 +118,11 @@ class Epoll_manager
 
 
 
-fd_data::fd_data(int fd, Epoll_manager& ep)
+fd_data::fd_data(int fd, Epoll_wrapper& ep)
     : m_fd(fd), m_ep(ep), m_mode(MODE::None)
 {}
 
-fd_data::fd_data(socket_address_storage addr, int fd, Epoll_manager& ep)
+fd_data::fd_data(socket_address_storage addr, int fd, Epoll_wrapper& ep)
     : m_fd(fd), m_ep(ep), m_addr(addr), m_mode(MODE::Http)
 {}
 
@@ -256,22 +256,33 @@ void fd_data::handle_http_request(http_request_parser& request_parser) {
 
         nlohmann::json response_msgs;
         if (request_msgs.contains("username") && request_msgs.contains("password")) {
+
             std::string name = request_msgs["username"];
             std::string password = request_msgs["password"];
-            std::string sql = "SELECT id FROM users WHERE username = '" + name + "' AND password = '" + password + "'";
+            
 
-            CHECK_SQL_CALL(mysql_query, sql_conn, sql.c_str());
-            MYSQL_RES* res = mysql_store_result(sql_conn);
+            if(request_msgs["action"]=="login")
+            {   
+                std::string sql = "SELECT id FROM users WHERE username = '?' AND password = '?'";
+                MYSQL_RES* res = sql_conn.exec_query(sql,{name,password}) ;
 
-            if (mysql_num_rows(res) > 0) {
-                response_msgs["status"] = "OK";
+                if (mysql_num_rows(res) > 0) {
+                    response_msgs["status"] = "OK";
+                    
+                } else {
+                    response_msgs["status"] = "用户不存在";
+                    
+                }
                 add_http_reponse(response_msgs.dump(), "application/json");
-            } else {
-                response_msgs["status"] = "用户不存在已注册新用户";
-                sql = "INSERT INTO users (username, password) VALUES ('" + name + "', '" + password + "')";
-                CHECK_SQL_CALL(mysql_query, sql_conn, sql.c_str());
+                mysql_free_result(res);
             }
-            mysql_free_result(res);
+            else if(request_msgs["action"]=="register"){
+                std::string sql = "INSERT INTO users (username, password) VALUES ('?', '?')";
+                sql_conn.exec_query(sql,{name,password});
+                response_msgs["status"] = "注册新用户";
+                add_http_reponse(response_msgs.dump(), "application/json");
+            }
+            
         } else {
             response_msgs["status"] = "no";
             add_http_reponse(response_msgs.dump(), "application/json");

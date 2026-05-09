@@ -4,16 +4,10 @@
 #include<sys/signalfd.h>
 #include<signal.h>
 #include"gai_resolver.hpp"
-#include"epoll_manager.hpp"
+#include"Epoll_wrapper.hpp"
 int main(){
-    sql_conn=mysql_init(NULL);
-    if(sql_conn==NULL){
-        printf("连接mysql失败");
-        
-        mysql_close(sql_conn);
-        return -1;
-    }
-    CHECK_SQL_CALL (!mysql_real_connect,sql_conn, "127.0.0.1", "root", "123456", "chatroom", 3306, nullptr, 0);
+    
+    
 
     //使服务端可以从main结尾退出
     signal(SIGPIPE,SIG_IGN);
@@ -45,7 +39,7 @@ int main(){
         perror("epoll_create");
         exit(0);
     }
-    Epoll_manager ep(epfd);
+    Epoll_wrapper ep(epfd);
     
     int listenfd=entry.create_socket_and_bind();
     ep.add_fd(listenfd);
@@ -139,7 +133,7 @@ int main(){
     }
     ep.remove_fd(listenfd);
     ep.remove_fd(sfd);
-    mysql_close(sql_conn);
+
 
 return 0;
 

@@ -16,7 +16,9 @@
         
         <input type="text" id="password" style="color: rgb(0, 0, 0); " placeholder="密码">
         
-        <button onclick="login()">读取</button>
+        <button onclick="login('login')" >登录</button>
+
+        <button onclick="login('register')" >注册</button>
         <p id="result"></p>
 
     </div>
@@ -27,19 +29,21 @@
         <p id="result"></p>
     </div>
     <script>
-        function login(){
+        function login(action){
             //document.getElementById('result').innerText='accept';
             let name=document.getElementById('username').value;
             let code=document.getElementById('password').value;
+            
             fetch('/api/submit',{
                 method:'POST',
                 headers:{
                     'Content-Type':'application/json'
                 },
                 body:JSON.stringify({
-
+                    
                     username:name,
-                    password:code
+                    password:code,
+                    action:action
                 })
             })
             .then(response=>response.json())

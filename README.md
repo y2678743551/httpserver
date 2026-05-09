@@ -74,7 +74,7 @@ wrk -t 4 -c 10000 -d 30s http://127.0.0.1:8080/
 ├── main.cpp                     # 入口，epoll 事件循环
 ├── http_parser.hpp              # HTTP 解析器        
 ├── websocket_parser.hpp         # WebSocket 解析器
-├── epoll_manager.hpp            # epoll 封装
+├── Epoll_wrapper.hpp            # epoll 封装
 ├── sql_util.hpp                 # 将来封装成SQL工具
 ├── file_util.hpp                # 读取静态文件
 ├── marco_chechker.hpp           # 封装系统调用并检查错误，简化错误处理。

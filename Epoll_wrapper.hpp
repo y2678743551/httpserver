@@ -15,24 +15,26 @@ enum MODE{
     };
 class fd_data{
     
+
+    std::string m_read_buffer="";//读缓冲区
+    
+    std::string m_write_buffer="";//写缓冲区
+    int m_fd;
         
-        std::string m_read_buffer="";//读缓冲区
+    Epoll_wrapper  &m_ep;
+    socket_address_storage m_addr;
+    bool m_close_after_send =false;
+    enum MODE m_mode;
         
-        std::string m_write_buffer="";//写缓冲区
-        int m_fd;
-        
-        Epoll_wrapper  &m_ep;
-        socket_address_storage m_addr;
-        bool m_close_after_send =false;
-        enum MODE m_mode;
-        
-        websocket_parser m_ws_parser;
+    websocket_parser m_ws_parser;
     public:
     bool is_ws();
     int &getfd();
     MODE& getmode();
-    void add_ws_reponse(std::string frame);
-    void add_http_reponse(std::string body,std::string type,int method=200);
+    void add_ws_reponse(const std::string &frame);
+    const std::string& get_index_html();
+    const std::string& get_style_css() ;
+    void add_http_reponse(const std::string &body,const std::string &type,int method=200);
     void handle_ws_request();
     void handle_http_request(http_request_parser &request_parser);
     bool on_readable();
@@ -46,7 +48,7 @@ class fd_data{
 
 class Epoll_wrapper 
 {   int m_epfd;
-    std::map<int,std::shared_ptr<fd_data>> m_connections;
+    std::unordered_map<int,std::shared_ptr<fd_data>> m_connections;
     public:
    
     void add_fd(int fd){//为监听fd和signalfd使用
@@ -146,7 +148,8 @@ void fd_data::build_addr(socket_address_storage addr) {
     m_addr = addr;
 }
 
-void fd_data::add_ws_reponse(std::string frame) {
+
+void fd_data::add_ws_reponse(const std::string &frame) {
     bool ifempty = m_write_buffer.empty();
     m_write_buffer += frame;
     if (ifempty) {
@@ -154,10 +157,26 @@ void fd_data::add_ws_reponse(std::string frame) {
     }
 }
 
-void fd_data::add_http_reponse(std::string body, std::string type, int method) {
-    if (body.empty()) {
-        body = "空";
-    }
+const std::string& fd_data::get_index_html() {
+    static const std::string _style_content= []() {
+        std::ifstream file("index.html");
+        return std::string((std::istreambuf_iterator<char>(file)),
+                           std::istreambuf_iterator<char>());
+    }();
+    
+    return _style_content;
+}
+const std::string& fd_data::get_style_css() {
+    static const std::string _style_content= []() {
+        std::ifstream file("style.css");
+        return std::string((std::istreambuf_iterator<char>(file)),
+                           std::istreambuf_iterator<char>());
+    }();
+
+    return _style_content;
+}
+
+void fd_data::add_http_reponse(const std::string &body,const std::string &type, int method) {
 
     http_writer head_buf;
     head_buf.head_begin(method);
@@ -188,7 +207,7 @@ void fd_data::handle_ws_request() {
         printf("fd：%d，无效JSON\n", m_fd);
     }
 }
-void fd_data::handle_http_request(http_request_parser& request_parser) {
+void fd_data::handle_http_request( http_request_parser& request_parser) {
     std::string upgrade = request_parser.get_header("upgrade");
     std::string connection = request_parser.get_header("connection");
     std::string key = request_parser.get_header("sec-websocket-key");
@@ -242,8 +261,8 @@ void fd_data::handle_http_request(http_request_parser& request_parser) {
     std::string method = request_parser.method();
 
     if (url == "/" || url == "/chat") {
-        std::string content = file_get_content("/home/vboxuser/c++/serve/index.html");
-        add_http_reponse(content, "text/html");
+        //std::string content = file_get_content("/home/vboxuser/c++/serve/index.html");
+        add_http_reponse(get_index_html(), "text/html");
     }
     else if (url == "/api/submit" && method == "POST") {
         nlohmann::json request_msgs;
@@ -289,8 +308,8 @@ void fd_data::handle_http_request(http_request_parser& request_parser) {
         }
     }
     else if (url == "/style.css") {
-        std::string content = file_get_content("/home/vboxuser/c++/serve/style.css");
-        add_http_reponse(content, "text/css");
+
+        add_http_reponse(get_style_css(), "text/css");
     }
     else if (url == "/favicon.ico") {
         add_http_reponse("404 Not Found", "text/plain", 404);

@@ -14,6 +14,7 @@ class SQL_wrapper{
     std::unique_ptr<MYSQL,MYSQL_deleter> m_conn;
     
     public:
+    
     SQL_wrapper(const std::string &host,const std::string &user,const std::string &passwd,
         const std::string &db,u_int port):m_conn(mysql_init(NULL)){
         
@@ -44,7 +45,7 @@ class SQL_wrapper{
         for (char c : sql) {
             if (c == '?' && param_idx < params.size()) {
                 // 用转义后的参数值替换 ?
-                real_sql += "'" + escape(params[param_idx++]) + "'";
+                real_sql +=  escape(params[param_idx++]);
             } else {
                 real_sql += c;
             }

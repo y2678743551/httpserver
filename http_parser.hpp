@@ -64,7 +64,7 @@ class http11_head_parser{
             }   
         }
     }
-    size_t push_chunk(std::string chunk){
+    size_t push_chunk(const std::string &chunk){
         assert(!m_head_finished);
         m_head.append(chunk);
         size_t head_len=m_head.find("\r\n\r\n");
@@ -124,7 +124,7 @@ class http_base_parser{
             return headline.substr(0,space);
         
     }
-    std::string get_header(std::string key){
+    std::string get_header(const std::string &key){
         auto &keys=headers();
         if(keys.find(key)!=keys.end()){
             return  keys[key];
@@ -180,7 +180,7 @@ class http_base_parser{
         }
         return 0;
     }
-    size_t push_chunk(std::string chunk){
+    size_t push_chunk(const std::string &chunk){
         assert(!m_body_finished);
         int pos=0;
         if(!head_finished()){
@@ -263,14 +263,14 @@ class http_writer{
     std::string& head(){
         return m_head;
     }
-    void head_begin(int status,std::string version="OK"){
+    void head_begin(int status,const std::string &version="OK"){
         assert(!m_begin);
         assert(!m_end);
         m_head.append("HTTP/1.1 "+std::to_string(status)+" "+version+"\r\n");
         m_begin=true;        
         return;
     }
-    void head_write(std::string key,std::string value){
+    void head_write(const std::string &key,const std::string &value){
         assert(!m_end);
         m_head.append(key+": "+value+"\r\n");
         

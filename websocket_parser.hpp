@@ -38,7 +38,7 @@ public:
             m_close = 1;
         }
     }
-    size_t parser_frame(std::string buf){
+    size_t parser_frame(const std::string &buf){
         size_t cur=0;
         size_t n=buf.length();
         while(cur<n){
@@ -161,7 +161,7 @@ public:
 class websocket_builder {
 public:
     
-    static std::string build(u_int8_t header1,std::string payload){
+    static std::string build(u_int8_t header1,const std::string &payload){
         std::string ret;
         ret+=char(header1);
         u_int64_t len=payload.size();

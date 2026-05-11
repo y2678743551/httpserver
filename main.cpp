@@ -3,12 +3,20 @@
 #include<algorithm>
 #include<sys/signalfd.h>
 #include<signal.h>
+#include<sys/eventfd.h>
 #include"gai_resolver.hpp"
 #include"Epoll_wrapper.hpp"
-int main(){
-    
-    
 
+
+int main(){
+    try{
+        DB::instance().init("127.0.0.1", "root", "123456", "chatroom", 3306);
+    }
+    catch(std::runtime_error&e ){
+        return 1;
+    }
+    size_t threads=std::thread::hardware_concurrency()*2;
+    thread_pool::instance().init(threads);
     //使服务端可以从main结尾退出
     signal(SIGPIPE,SIG_IGN);
     sigset_t mask;
@@ -39,12 +47,13 @@ int main(){
         perror("epoll_create");
         exit(0);
     }
-    Epoll_wrapper ep(epfd);
+    int event_fd=eventfd(0,EFD_NONBLOCK);
+    Epoll_wrapper ep(epfd,event_fd);
     
     int listenfd=entry.create_socket_and_bind();
     ep.add_fd(listenfd);
     ep.add_fd(sfd);
-
+    ep.add_fd(event_fd);
     int flag=fcntl(listenfd,F_GETFL);
     flag|=O_NONBLOCK;
     fcntl(listenfd,F_SETFL,flag);
@@ -62,8 +71,12 @@ int main(){
         
         //printf("%d\n",num);
         for(int i=0;i<num;i++){ 
-            
-            
+            if(evs[i].data.fd==event_fd){
+                u_int64_t val;
+                CHECK_CALL(read,event_fd,&val,sizeof(val));
+                ep.flush_pending();
+            }
+            else
             if(evs[i].data.fd==sfd){                //处理中断信号
                 
                 signalfd_siginfo siginfo;
@@ -133,7 +146,7 @@ int main(){
     }
     ep.remove_fd(listenfd);
     ep.remove_fd(sfd);
-
+    ep.remove_fd(event_fd);
 
 return 0;
 

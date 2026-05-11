@@ -52,9 +52,20 @@ template<class T>
 T check_SQL_error(const char*msg,T ret){
 
     if(ret==0){
-         printf("%s: %s\n",msg,strerror(errno));
-         auto ec=std::error_code(errno,mysql_category());
-         throw std::system_error(ec,msg);   
+         printf("%s\n",msg);
+
+         throw std::runtime_error(msg);   
+        }
+        return ret;
+}
+template<class T>
+
+T check_stmt_error(const char*msg,T ret){
+
+    if(ret!=0){
+         printf("%s\n",msg);
+
+         throw std::runtime_error(msg);   
         }
         return ret;
 }
@@ -64,4 +75,5 @@ T check_SQL_error(const char*msg,T ret){
 #define SOURCE_INFO() SOURCE_INFO_IMPL(__FILE__,__LINE__)
 #define CHECK_CALL_EXCEPT(except,func,...) check_error<except>(SOURCE_INFO() #func,func( __VA_ARGS__ ))
 #define CHECK_CALL(func,...) check_error(SOURCE_INFO() #func,func( __VA_ARGS__ ))
-#define CHECK_SQL_CALL(func,...) check_error(SOURCE_INFO() #func,func( __VA_ARGS__ ))
+#define CHECK_SQL_CALL(func,...) check_SQL_error(SOURCE_INFO() #func,func( __VA_ARGS__ ))
+#define CHECK_STMT_CALL(func,...) check_stmt_error(SOURCE_INFO() #func,func( __VA_ARGS__ ))

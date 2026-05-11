@@ -17,22 +17,22 @@
 
 ## ✨ 主要特性
 
-- ✅ 完全手写 epoll 事件驱动，支持 **5 万并发连接**，QPS ~4400
-- ✅ HTTP 请求解析器（支持 GET/POST、Header、Body）
-- ✅ 非阻塞写缓冲区 + EPOLLOUT 管理，避免数据发送阻塞
-- ✅ WebSocket 协议完整实现：
+-  完全手写 epoll 事件驱动，支持 **5 万并发连接**，QPS ~4400
+-  HTTP 请求解析器（支持 GET/POST、Header、Body）
+-  非阻塞写缓冲区 + EPOLLOUT 管理，避免数据发送阻塞
+-  WebSocket 协议完整实现：
   - 握手升级（101 Switching Protocols）
   - 文本帧收发、分片自动组装
   - Ping/Pong 心跳保活
   - 关闭帧礼貌关闭
-- ✅ 静态文件服务（HTML/CSS）
-- ✅ REST API 示例：`/api/submit` 登录接口（JSON 交互）
-- ✅ 前端单页应用：
+-  静态文件服务（HTML/CSS）
+-  REST API 示例：`/api/submit` 登录接口（JSON 交互）
+-  前端单页应用：
   - 登录页面与聊天室页面无刷新切换
   - localStorage 保存登录状态，页面刷新自动重连 WebSocket
   - 实时消息展示
-- ✅ 优雅退出（信号捕获 + 资源释放）
-- ✅ 高并发压测报告（wrk 工具）
+-  优雅退出（信号捕获 + 资源释放）
+-  高并发压测报告（wrk 工具）
 
 ## 🔧 编译与运行
 
@@ -41,7 +41,6 @@
 ```bash
 sudo apt update
 sudo apt install g++ make libmysqlclient-dev libssl-dev libboost-all-dev
-# nlohmann/json 是 header-only 库，可手动下载或通过包管理器安装
 sudo apt install nlohmann-json3-dev
 ```
 
@@ -54,7 +53,7 @@ make
 运行
 
 ```bash
-./serve
+./main
 ```
 
 默认监听 127.0.0.1:8080。在浏览器中访问 http://127.0.0.1:8080 即可打开聊天室登录页。
@@ -133,10 +132,10 @@ wrk -t 4 -c 10000 -d 30s http://127.0.0.1:8080/
 
 ```json
 {
-    "type": "broadcast",
+    "type": "chat",
     "from": "aa",
     "content": "Hello!",
-    "time": "2025-04-24T12:00:00Z"
+
 }
 ```
 
@@ -164,6 +163,13 @@ wrk -t 4 -c 50000 -d 30s --latency http://127.0.0.1:8080/
 ## 压测结果
 
 ![wrk压测结果](/docs/wrk.png)
+
+> 启用静态文件缓存后，QPS 可提升至 4.5 万。
+
+![wrk压测结果](/docs/wrk2.png)
+
+
+
 
 📝 许可证
 

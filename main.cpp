@@ -7,16 +7,14 @@
 #include"gai_resolver.hpp"
 #include"Epoll_wrapper.hpp"
 
+std::string DB::s_host;
+std::string DB::s_user;
+std::string DB::s_passwd;
+std::string DB::s_db;
+unsigned int DB::s_port = 0;
 
 int main(){
-    try{
-        DB::instance().init("127.0.0.1", "root", "123456", "chatroom", 3306);
-    }
-    catch(std::runtime_error&e ){
-        return 1;
-    }
-    size_t threads=std::thread::hardware_concurrency()*2;
-    thread_pool::instance().init(threads);
+    
     //使服务端可以从main结尾退出
     signal(SIGPIPE,SIG_IGN);
     sigset_t mask;
@@ -24,7 +22,7 @@ int main(){
     sigaddset(&mask,SIGINT);
     sigaddset(&mask,SIGTERM);
     sigaddset(&mask,SIGQUIT);
-    //signal(SIGPIPE,SIG_IGN);
+    //signal(SIGPIPE,SIG_IGN);        
     CHECK_CALL(sigprocmask,SIG_BLOCK,&mask,NULL);
     int sfd=signalfd(-1,&mask,SFD_NONBLOCK);
     if(sfd==-1){
@@ -34,8 +32,14 @@ int main(){
 
 
     setlocale(LC_ALL,"zh_CN.UTF-8");
- 
-    
+ try{
+        DB::instance().init("127.0.0.1", "root", "123456", "chatroom", 3306);
+    }
+    catch(std::runtime_error&e ){
+        return 1;
+    }
+    size_t threads=std::thread::hardware_concurrency();
+    thread_pool::instance().init(threads);
     address_resolver resolver;//服务端申请地址端口
     resolver.resolve("127.0.0.1","8080");
     
@@ -48,6 +52,7 @@ int main(){
         exit(0);
     }
     int event_fd=eventfd(0,EFD_NONBLOCK);
+    
     Epoll_wrapper ep(epfd,event_fd);
     
     int listenfd=entry.create_socket_and_bind();
@@ -64,14 +69,10 @@ int main(){
     bool running=true;
     
     while(running){
-      
-        
-        
         int num=CHECK_CALL(epoll_wait,epfd,evs,size,-1);
-        
-        //printf("%d\n",num);
-        for(int i=0;i<num;i++){ 
-            if(evs[i].data.fd==event_fd){
+        for(int i=0;i<num;i++){
+            
+            if(evs[i].data.fd==event_fd){ 
                 u_int64_t val;
                 CHECK_CALL(read,event_fd,&val,sizeof(val));
                 ep.flush_pending();
@@ -81,9 +82,11 @@ int main(){
                 
                 signalfd_siginfo siginfo;
                 ssize_t s=read(sfd,&siginfo,sizeof(siginfo));
+              
+                //printf("received signal\n");
                 if(s==sizeof(siginfo)){
                     int sig=siginfo.ssi_signo;
-                    //printf("received signal %d (%s)\n",sig,strsignal(sig));
+                    printf("received signal %d (%s)\n",sig,strsignal(sig));
                     if(sig==SIGINT||sig==SIGTERM||sig==SIGPIPE){
                         running=false;
                     }
@@ -93,19 +96,22 @@ int main(){
             }else
             if(evs[i].data.fd==listenfd){//监听新客户端
                 
+                
                 socket_address_storage addr;
                 int clientfd;
                  
-            while(1) {
+                while(1) {
 
                     clientfd=accept4(listenfd,addr.m_addr,&addr.m_addrlen,O_NONBLOCK);
-                  
+                    
                     
                     if(clientfd>=0){
+
+
                         int flag=fcntl(clientfd,F_GETFL);
                         flag|=O_NONBLOCK;
                         fcntl(clientfd,F_SETFL,flag);
-                    
+                        
                         ep.add_to_epoll(std::make_shared<fd_data>(addr,clientfd,ep));
                         //printf("build new connect:%d\n",clientfd);
                         
@@ -128,6 +134,7 @@ int main(){
                 
             }
             }else{      //处理客户端
+                
                 int fd=evs[i].data.fd;
 
                 if(fcntl(fd,F_GETFD)==-1)

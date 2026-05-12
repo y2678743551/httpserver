@@ -4,6 +4,7 @@
 #include <memory>
 #include <vector>
 #include <mutex>
+#include <thread>
 #include"macro_chechker.hpp"
 
 class DB{
@@ -13,16 +14,42 @@ class DB{
         }
     };
     
-    std::unique_ptr<MYSQL,MYSQL_deleter> m_conn;
-    std::mutex m_mutex;
+
+    //std::mutex m_mutex;
+    static std::string s_host;
+    static std::string s_user;
+    static std::string s_passwd;
+    static std::string s_db;
+    static unsigned int s_port;
     DB()=default;
     DB(const DB&)=delete;
     DB& operator ==(const DB&)=delete;
 
     ~DB()=default;
-
+    static MYSQL* get_conn(){
+        thread_local std::unique_ptr<MYSQL,decltype (&mysql_close)> conn(NULL,mysql_close);
+      
+        if(!conn)
+        {
+            MYSQL*raw=mysql_init(NULL);
+            if(raw==NULL){
+                printf("%s: %s\n",SOURCE_INFO(),"mysql初始化失败");
+                throw std::runtime_error("mysql初始化失败");
+                return NULL;
+            }
+            raw=mysql_real_connect(raw,s_host.c_str(), s_user.c_str(), s_passwd.c_str(), s_db.c_str(), s_port, nullptr, 0);
+            if(raw==NULL)
+            {
+                mysql_close(raw);
+                return NULL;
+            }
+            conn.reset(raw);
+        }    
+        
+        return conn.get();
+    }
     MYSQL_STMT* prepare(const std::string& sql, const std::vector<std::string>& params){
-        MYSQL_STMT* stmt = mysql_stmt_init(m_conn.get());
+        MYSQL_STMT* stmt = mysql_stmt_init(get_conn());
         if (!stmt) {
             printf("%s: %s\n",SOURCE_INFO(),"mysql_stmt初始化失败");
             throw std::runtime_error("mysql_stmt初始化失败");
@@ -63,28 +90,12 @@ class DB{
         static DB db;
         return db;
     }
-    bool init(const std::string &host,const std::string &user,const std::string &passwd,
-        const std::string &db,u_int port){
-        MYSQL *conn=mysql_init(NULL);
-        if(conn==NULL){
-            printf("%s: %s\n",SOURCE_INFO(),"mysql初始化失败");
-            throw std::runtime_error("mysql初始化失败");
-            return false;
-        }
-        conn=mysql_real_connect(conn,host.c_str(), user.c_str(), passwd.c_str(), db.c_str(), port, nullptr, 0);
-        if(conn==NULL)
-        {
-            mysql_close(conn);
-            return false;
-        }
-        
-        m_conn.reset(conn);
-        return true;
-    }
-    
+    void init(const std::string &host,const std::string &user,const std::string &passwd,
+        const std::string &db,u_int port)
+    { s_host = host; s_user = user; s_passwd = passwd; s_db = db; s_port = port;}
     bool exist(const std::string& sql, const std::vector<std::string>& params) {
-        if (!m_conn) return NULL;
-        std::lock_guard<std::mutex> lock(m_mutex);
+        if (!get_conn()) return NULL;
+        //std::lock_guard<std::mutex> lock(m_mutex);
         MYSQL_STMT* stmt=prepare(sql,params);
         if(!stmt)
         {
@@ -108,8 +119,8 @@ class DB{
     }
     bool insert(const std::string& sql, const std::vector<std::string>& params) {
 
-        if (!m_conn) return NULL;
-        std::lock_guard<std::mutex> lock(m_mutex);
+        if (!get_conn()) return NULL;
+        //std::lock_guard<std::mutex> lock(m_mutex);
         MYSQL_STMT* stmt=prepare(sql,params);
         if(!stmt)
         {
@@ -131,8 +142,8 @@ class DB{
                                         const std::vector<std::string>& params) 
     {
         std::vector<std::vector<std::string>> rows;
-        if (!m_conn) return rows;
-        std::lock_guard<std::mutex> lock(m_mutex);
+        if (!get_conn()) return rows;
+        //std::lock_guard<std::mutex> lock(m_mutex);
         MYSQL_STMT* stmt=prepare(sql,params);
         if(!stmt)
         {
@@ -175,6 +186,6 @@ class DB{
     }
 
     bool ping() {
-        return mysql_ping(m_conn.get()) == 0;
+        return mysql_ping(get_conn()) == 0;
     }
 };

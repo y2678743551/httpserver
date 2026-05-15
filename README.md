@@ -2,7 +2,7 @@
 ```markdown
 # 🚀 C++  HTTP + WebSocket 服务器
 
-一个从零实现的、基于 epoll 的非阻塞 HTTP/1.1 和 WebSocket 服务器，支持静态页面、REST API、实时聊天消息广播，并经过 5 万并发连接压测。
+一个从零实现的、基于 epoll 的非阻塞 HTTP/1.1 和 WebSocket 服务器，支持静态页面、REST API、实时聊天消息广播。
 
 ## 📚 技术栈
 
@@ -58,11 +58,6 @@ make
 
 默认监听 127.0.0.1:8080。在浏览器中访问 http://127.0.0.1:8080 即可打开聊天室登录页。
 
-压测
-
-```bash
-wrk -t 4 -c 10000 -d 30s http://127.0.0.1:8080/
-```
 
 📁 项目结构
 
@@ -73,13 +68,15 @@ wrk -t 4 -c 10000 -d 30s http://127.0.0.1:8080/
 ├── main.cpp                     # 入口，epoll 事件循环
 ├── http_parser.hpp              # HTTP 解析器        
 ├── websocket_parser.hpp         # WebSocket 解析器
+├── thread_pool.hpp              # 线程池
 ├── Epoll_wrapper.hpp            # epoll 封装
-├── sql_util.hpp                 # 将来封装成SQL工具
-├── file_util.hpp                # 读取静态文件
+├── SQL_wrapper.hpp              # SQL 封装
+├── gai_resolver.hpp             # 封装gai工具获取端口地址
 ├── marco_chechker.hpp           # 封装系统调用并检查错误，简化错误处理。
 ├── addr_util.hpp                # 套接字地址存储结构（兼容 sockaddr/sockaddr_storage）
 ├── index.html                   # 前端页面
 └── style.css                    # 样式
+
 ```
 
 🔌 API 接口
@@ -90,8 +87,8 @@ wrk -t 4 -c 10000 -d 30s http://127.0.0.1:8080/
 
 ```json
 {
-    "username": "aa",
-    "password": "111"
+    "username": "***",
+    "password": "***"
 }
 ```
 
@@ -112,7 +109,7 @@ wrk -t 4 -c 10000 -d 30s http://127.0.0.1:8080/
 ```json
 {
     "type": "chat",
-    "user": "aa"
+    "user": "***"
 }
 ```
 
@@ -124,7 +121,7 @@ wrk -t 4 -c 10000 -d 30s http://127.0.0.1:8080/
 {
     "type": "chat",
     "content": "Hello!",
-    "user": "aa"
+    "user": "***"
 }
 ```
 
@@ -133,7 +130,7 @@ wrk -t 4 -c 10000 -d 30s http://127.0.0.1:8080/
 ```json
 {
     "type": "chat",
-    "from": "aa",
+    "from": "***",
     "content": "Hello!",
 
 }
@@ -146,29 +143,21 @@ wrk -t 4 -c 10000 -d 30s http://127.0.0.1:8080/
 
 📊 性能测试
 
-使用 wrk 压测：
-
-```
-wrk -t 4 -c 50000 -d 30s --latency http://127.0.0.1:8080/
-```
-
-结果：
-
-· 总请求数：807574
-· QPS：26835.68
-· 平均延迟：1.03s
-· 99% 延迟：1.18s
-· 无连接错误
+使用wrk工具压测
 
 ## 压测结果
 
-![wrk压测结果](/docs/wrk.png)
+静态回环压测
+使用命令：wrk -t 4 -c 1000 -d 30s -T 10  --latency http://127.0.0.1:8080/
+![wrk压测结果](/docs/o2wrk.png)
+多线程带有简单SQL查询压测
+使用命令：wrk -t 4 -c 1000 -d 30s -T 10 --latency -s post.lua http://127.0.0.1:8080/api/submit
+![wrk压测结果](/docs/SQLwrk.png)
 
-> 启用静态文件缓存后，QPS 可提升至 4.5 万。
-
-![wrk压测结果](/docs/wrk2.png)
-
-
+post.lua内容
+wrk.method = "POST"
+wrk.body = '{"username":"aa","password":"11","action":"login"}'
+wrk.headers["Content-Type"] = "application/json"
 
 
 📝 许可证

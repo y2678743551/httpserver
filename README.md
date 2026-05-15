@@ -17,7 +17,7 @@
 
 ## ✨ 主要特性
 
--  完全手写 epoll 事件驱动，支持 **5 万并发连接**，QPS ~4400
+-  完全手写 epoll 事件驱动
 -  HTTP 请求解析器（支持 GET/POST、Header、Body）
 -  非阻塞写缓冲区 + EPOLLOUT 管理，避免数据发送阻塞
 -  WebSocket 协议完整实现：
@@ -32,7 +32,7 @@
   - localStorage 保存登录状态，页面刷新自动重连 WebSocket
   - 实时消息展示
 -  优雅退出（信号捕获 + 资源释放）
--  高并发压测报告（wrk 工具）
+-  高并发压测报告（wrk 工具五万并法连接无报错）
 
 ## 🔧 编译与运行
 
@@ -150,10 +150,12 @@ make
 静态回环压测
 使用命令：wrk -t 4 -c 1000 -d 30s -T 10  --latency http://127.0.0.1:8080/
 ![wrk压测结果](/docs/o2wrk.png)
-多线程带有简单SQL查询压测
+QPS在8万到10万之间
+
+多线程带有SQL查询压测（单词查询<0.5s）
 使用命令：wrk -t 4 -c 1000 -d 30s -T 10 --latency -s post.lua http://127.0.0.1:8080/api/submit
 ![wrk压测结果](/docs/SQLwrk.png)
-
+QPS在1.5万到2万之间
 post.lua内容
 wrk.method = "POST"
 wrk.body = '{"username":"aa","password":"11","action":"login"}'
